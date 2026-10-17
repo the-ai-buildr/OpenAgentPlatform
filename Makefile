@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-PROJECT_NAME  := agno-agentos-openwebui
+PROJECT_NAME  := oap
 COMPOSE       := docker compose
 DEV_COMPOSE   := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 PROD_COMPOSE  := docker compose -f docker-compose.yml -f docker-compose.prod.yml
@@ -15,27 +15,28 @@ include .env
 export
 endif
 
-AGENTOS_URL   := http://localhost:$(or $(AGENTOS_PORT),8000)
+OAP_URL       := http://localhost:$(or $(OAP_PORT),8000)
 WEBUI_URL     := http://localhost:$(or $(OPEN_WEBUI_PORT),3000)
 PHOENIX_URL   := http://localhost:$(or $(OTEL_UI_PORT),6006)
+CONTROL_PLANE := https://os.agno.com/			
 AUTH_HEADER   := Authorization: Bearer $(OS_SECURITY_KEY)
 
 .PHONY: help setup env venv up dev down restart build rebuild ps status health models \
         watcher-status logs logs-api logs-db logs-otel logs-webui test test-watch lint \
         format typecheck db-shell db-dump db-restore kb-list files-tree urls \
         prod-config prod-up prod-down prod-logs config destroy-volumes \
-        agentos phoenix-mcp
+        oap phoenix-mcp
 
 # --------------------------------------------------------------------------- #
 help: ## Show this help
 	@echo ""
-	@echo "  $(PROJECT_NAME) - Agno AgentOS + Open WebUI"
+	@echo "  $(PROJECT_NAME) - Open Agent Platform"
 	@echo ""
 	@echo "  Setup"
 	@grep -hE '^(setup|env|venv|build|rebuild|phoenix-mcp):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  Run (local development)"
-	@grep -hE '^(up|dev|agentos|down|restart|ps|urls):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^(up|dev|oap|down|restart|ps|urls):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  Inspect"
 	@grep -hE '^(status|health|models|watcher-status|logs|logs-api|logs-db|logs-otel|logs-webui|files-tree|kb-list|config):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -96,12 +97,12 @@ restart: ## Restart every service
 ps: ## Show container status
 	$(DEV_COMPOSE) ps
 
-agentos: env ## Start AgentOS with its default agents, Postgres and Phoenix (no Open WebUI)
-	$(DEV_COMPOSE) up -d --build agentos-db agentos-otel agentos-api
+oap: env ## Start the API with its default agents, Postgres and Phoenix (no Open WebUI)
+	$(DEV_COMPOSE) up -d --build oap-db oap-otel oap-api
 	@echo ""
-	@echo "  AgentOS only. Default agents: platform-builder, platform-engineer,"
-	@echo "  platform-manager, platform-telemetry, and the agno coordinator."
-	@echo "  Control plane: https://os.agno.com  -> Local -> $(AGENTOS_URL)"
+	@echo "  OAP only. Default agents: platform-builder, platform-engineer,"
+	@echo "  platform-manager, platform-telemetry, and the oap coordinator."
+	@echo "  Control plane: https://os.agno.com  -> Local -> $(OAP_URL)"
 	@echo "  Security key is OS_SECURITY_KEY in .env."
 	@$(MAKE) --no-print-directory urls
 
@@ -116,36 +117,36 @@ phoenix-mcp: ## Register Phoenix MCP at $(PHOENIX_URL)/mcp (AGENT=cursor|claude|
 urls: ## Print the local service URLs
 	@echo ""
 	@echo "  Open WebUI   $(WEBUI_URL)"
-	@echo "  AgentOS API  $(AGENTOS_URL)/docs    (health: $(AGENTOS_URL)/health)"
+	@echo "  OAP API      $(OAP_URL)/docs    (health: $(OAP_URL)/health)"
 	@echo "  Phoenix UI   $(PHOENIX_URL)"
-	@echo "  MCP endpoint $(AGENTOS_URL)/mcp"
+	@echo "  MCP endpoint $(OAP_URL)/mcp"
 	@echo ""
 
 # --------------------------------------------------------------------------- #
 # Inspect
 # --------------------------------------------------------------------------- #
 health: ## Fetch /health from the API
-	@curl -fsS $(AGENTOS_URL)/health | $(PY) -m json.tool || echo "AgentOS is not reachable at $(AGENTOS_URL)"
+	@curl -fsS $(OAP_URL)/health | $(PY) -m json.tool || echo "OAP is not reachable at $(OAP_URL)"
 
 models: ## List the models the bridge advertises to Open WebUI
-	@curl -fsS -H "$(AUTH_HEADER)" $(AGENTOS_URL)/v1/models | $(PY) -m json.tool || echo "AgentOS is not reachable at $(AGENTOS_URL)"
+	@curl -fsS -H "$(AUTH_HEADER)" $(OAP_URL)/v1/models | $(PY) -m json.tool || echo "OAP is not reachable at $(OAP_URL)"
 
 watcher-status: ## Show the workspace file-watcher status
-	@curl -fsS -H "$(AUTH_HEADER)" $(AGENTOS_URL)/v1/files/watcher-status | $(PY) -m json.tool || echo "AgentOS is not reachable at $(AGENTOS_URL)"
+	@curl -fsS -H "$(AUTH_HEADER)" $(OAP_URL)/v1/files/watcher-status | $(PY) -m json.tool || echo "OAP is not reachable at $(OAP_URL)"
 
 status: ps health models ## Containers, health and advertised models
 
 logs: ## Tail logs from every service
 	$(DEV_COMPOSE) logs -f --tail=100
 
-logs-api: ## Tail AgentOS API logs
-	$(DEV_COMPOSE) logs -f --tail=100 agentos-api
+logs-api: ## Tail OAP API logs
+	$(DEV_COMPOSE) logs -f --tail=100 oap-api
 
 logs-db: ## Tail Postgres logs
-	$(DEV_COMPOSE) logs -f --tail=100 agentos-db
+	$(DEV_COMPOSE) logs -f --tail=100 oap-db
 
 logs-otel: ## Tail Phoenix (OTel collector/UI) logs
-	$(DEV_COMPOSE) logs -f --tail=100 agentos-otel
+	$(DEV_COMPOSE) logs -f --tail=100 oap-otel
 
 logs-webui: ## Tail Open WebUI logs
 	$(DEV_COMPOSE) logs -f --tail=100 open-webui
@@ -154,7 +155,7 @@ files-tree: ## List the workspace file tree
 	@find workspace_files -maxdepth 4 -not -path '*/.*' | sort
 
 kb-list: ## List the PgVector knowledge tables
-	@$(DEV_COMPOSE) exec -T agentos-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos) \
+	@$(DEV_COMPOSE) exec -T oap-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),oap) \
 		-c "SELECT schemaname, tablename FROM pg_tables WHERE tablename LIKE 'kb\\_%' ORDER BY 1,2;"
 
 # --------------------------------------------------------------------------- #
@@ -182,13 +183,13 @@ typecheck: ## Byte-compile every module as a cheap import/syntax check
 # Database
 # --------------------------------------------------------------------------- #
 db-shell: ## Open a psql shell on the database
-	$(DEV_COMPOSE) exec agentos-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos)
+	$(DEV_COMPOSE) exec oap-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),oap)
 
 db-dump: ## Dump the database to db/backups/<timestamp>.sql
 	@mkdir -p db/backups
 	@out="db/backups/$$(date -u +%Y%m%dT%H%M%SZ).sql"; \
 	tmp="$$out.partial"; \
-	if $(DEV_COMPOSE) exec -T agentos-db pg_dump -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos) > "$$tmp"; then \
+	if $(DEV_COMPOSE) exec -T oap-db pg_dump -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),oap) > "$$tmp"; then \
 		mv "$$tmp" "$$out"; echo "Wrote $$out ($$(wc -c < "$$out") bytes)"; \
 	else \
 		rm -f "$$tmp"; echo "Dump failed - no file written. Is the database running? (make ps)" >&2; exit 1; \
@@ -197,7 +198,7 @@ db-dump: ## Dump the database to db/backups/<timestamp>.sql
 db-restore: ## Restore a dump: make db-restore FILE=db/backups/<file>.sql
 	@test -n "$(FILE)" || { echo "Usage: make db-restore FILE=db/backups/<file>.sql"; exit 1; }
 	@test -f "$(FILE)" || { echo "No such file: $(FILE)"; exit 1; }
-	$(DEV_COMPOSE) exec -T agentos-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos) < "$(FILE)"
+	$(DEV_COMPOSE) exec -T oap-db psql -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),oap) < "$(FILE)"
 
 # --------------------------------------------------------------------------- #
 # Production
@@ -222,7 +223,7 @@ destroy-volumes: ## !! DELETES the database, chat history and traces forever !!
 	@echo ""
 	@echo "  ****************************  DANGER  ****************************"
 	@echo "  This deletes the Postgres volume (all agent sessions, knowledge"
-	@echo "  embeddings and AgentOS tables), the Open WebUI volume (all accounts,"
+	@echo "  embeddings and session tables), the Open WebUI volume (all accounts,"
 	@echo "  chats and uploads) and the Phoenix volume (all traces)."
 	@echo ""
 	@echo "  Files in ./workspace_files are NOT touched."

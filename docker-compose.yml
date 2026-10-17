@@ -4,32 +4,32 @@
 # Secrets use the `${VAR:?message}` form on purpose: compose refuses to start
 # rather than silently falling back to a published default password.
 
-name: agno-agentos-openwebui
+name: oap
 
 services:
-  agentos-db:
+  oap-db:
     build:
       context: ./db
       dockerfile: Dockerfile
-    container_name: agentos-db
+    container_name: oap-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-ai}
       POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS must be set in .env (run `make setup`)}
-      POSTGRES_DB: ${DB_NAME:-agentos}
+      POSTGRES_DB: ${DB_NAME:-oap}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ai} -d ${DB_NAME:-agentos}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ai} -d ${DB_NAME:-oap}"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 20s
 
-  agentos-otel:
+  oap-otel:
     image: arizephoenix/phoenix:version-20.23.0
-    container_name: agentos-otel
+    container_name: oap-otel
     restart: unless-stopped
     ports:
       - "127.0.0.1:${OTEL_UI_PORT:-6006}:6006"
@@ -42,31 +42,25 @@ services:
     volumes:
       - otel_data:/mnt/data
 
-  agentos-api:
+  oap-api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: agno-agentos-api:local
-    container_name: agentos-api
-    # Open WebUI is configured with http://oap-api:8000/v1. The service name
-    # stays agentos-api; this alias is the name that connection dials.
-    networks:
-      default:
-        aliases:
-          - oap-api
+    image: oap-api:local
+    container_name: oap-api
     restart: unless-stopped
     env_file: [.env]
     environment:
       # Derived from the DB_* parts so the two can never drift apart.
-      DATABASE_URL: postgresql+psycopg://${DB_USER:-ai}:${DB_PASS:?DB_PASS must be set in .env}@agentos-db:5432/${DB_NAME:-agentos}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://agentos-otel:6006}
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-ai}:${DB_PASS:?DB_PASS must be set in .env}@oap-db:5432/${DB_NAME:-oap}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://oap-otel:6006}
     volumes:
       - ./workspace_files:/app/workspace_files
       - openwebui_data:/app/openwebui_data:ro
     depends_on:
-      agentos-db:
+      oap-db:
         condition: service_healthy
-      agentos-otel:
+      oap-otel:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
@@ -82,20 +76,20 @@ services:
     environment:
       ENABLE_OLLAMA_API: "false"
       ENABLE_OPENAI_API: "true"
-      OPENAI_API_BASE_URLS: ${OPENAI_API_BASE_URLS:-http://agentos-api:8000/v1}
+      OPENAI_API_BASE_URLS: ${OPENAI_API_BASE_URLS:-http://oap-api:8000/v1}
       OPENAI_API_KEYS: ${OS_SECURITY_KEY:?OS_SECURITY_KEY must be set in .env}
       # Applied on a fresh WebUI database. An existing database keeps the
-      # connection it already saved; the oap-api alias above is what makes
-      # that saved URL resolve.
-      OPENAI_API_CONFIGS: '{"0":{"enable":true,"tags":["AgentOS"],"prefix_id":"","model_ids":[],"connection_type":"external"}}'
-      DEFAULT_MODELS: ${DEFAULT_MODELS:-agno}
+      # connection it already saved. The API service name on this network is
+      # oap-api.
+      OPENAI_API_CONFIGS: '{"0":{"enable":true,"tags":["OAP"],"prefix_id":"","model_ids":[],"connection_type":"external"}}'
+      DEFAULT_MODELS: ${DEFAULT_MODELS:-oap}
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set in .env}
       WEBUI_NAME: ${WEBUI_NAME:-Open Agent Platform}
       TASK_MODEL_EXTERNAL: ${TASK_MODEL_EXTERNAL:-platform-manager}
     volumes:
       - openwebui_data:/app/backend/data
     depends_on:
-      agentos-api:
+      oap-api:
         condition: service_healthy
 
 volumes:

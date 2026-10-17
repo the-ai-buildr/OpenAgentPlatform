@@ -1,18 +1,18 @@
 """
-title: AgentOS File Router
+title: OAP File Router
 author: the-ai-buildr
 version: 2.0.0
 license: MIT
 description: >-
-  Routes files attached in Open WebUI into the matching AgentOS workspace
-  folder. Only needed when AgentOS is wired up as a plain OpenAI connection;
-  the AgentOS manifold Pipe and the bridge already handle routing.
+  Routes files attached in Open WebUI into the matching OAP workspace
+  folder. Only needed when OAP is wired up as a plain OpenAI connection;
+  the OAP manifold Pipe and the bridge already handle routing.
 requirements: requests
 """
 
 # Install: Open WebUI -> Workspace -> Functions -> + -> paste this file -> Save.
 #
-# Leave this DISABLED if you use the AgentOS Pipe. Staging is idempotent
+# Leave this DISABLED if you use the OAP Pipe. Staging is idempotent
 # (the bridge deduplicates by content hash), so running both is harmless but
 # doubles the work on every upload.
 
@@ -27,14 +27,14 @@ FOLDER_TAG = re.compile(r"#folder:(\S+)")
 
 class Filter:
     class Valves(BaseModel):
-        agentos_base_url: str = Field(
-            default="http://agentos-api:8000",
-            description="Base URL of the AgentOS API as seen from the Open WebUI container.",
+        oap_base_url: str = Field(
+            default="http://oap-api:8000",
+            description="Base URL of the OAP API as seen from the Open WebUI container.",
         )
-        api_key: str = Field(default="", description="OS_SECURITY_KEY for the AgentOS bridge.")
+        api_key: str = Field(default="", description="OS_SECURITY_KEY for the OAP bridge.")
         default_folder: str = Field(
             default="",
-            description="Folder to use when the message carries no #folder: tag. Blank = let AgentOS decide.",
+            description="Folder to use when the message carries no #folder: tag. Blank = let OAP decide.",
         )
         auto_bind_agent_knowledge: bool = Field(
             default=True,
@@ -91,10 +91,10 @@ class Filter:
         model = body.get("model") or "platform-builder"
 
         for name in names:
-            await self._emit(__event_emitter__, f"Routing {name} to AgentOS…", done=False)
+            await self._emit(__event_emitter__, f"Routing {name} to OAP…", done=False)
             try:
                 response = requests.post(
-                    f"{self.valves.agentos_base_url.rstrip('/')}/v1/files/route",
+                    f"{self.valves.oap_base_url.rstrip('/')}/v1/files/route",
                     headers=self._headers(),
                     json={
                         "filename_query": name,

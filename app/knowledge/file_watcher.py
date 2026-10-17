@@ -23,7 +23,7 @@ from app.settings import WORKSPACE_ROOT, settings
 from app.telemetry.otel import get_tracer
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer("agno.watcher")
+tracer = get_tracer("oap.watcher")
 
 MAX_EVENT_LOG = 50
 WATCHER_EVENT_LOG: deque[dict[str, Any]] = deque(maxlen=MAX_EVENT_LOG)

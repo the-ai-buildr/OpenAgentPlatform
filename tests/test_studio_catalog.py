@@ -66,4 +66,4 @@ def test_studio_catalogue_failure_does_not_hide_code_agents(monkeypatch):
     monkeypatch.setattr(runtime, "get_db", lambda: Database())
 
     ids = [entry["id"] for entry in runtime.describe_agents()]
-    assert ids == ["agno", "platform-builder"]
+    assert ids == ["oap", "platform-builder"]

@@ -55,7 +55,7 @@ class TestUpsert:
             "platform-engineer",
             "platform-manager",
             "platform-telemetry",
-            "agno",
+            "oap",
         ],
     )
     def test_rejects_reserved_ids(self, registry_file, reserved):
@@ -113,7 +113,7 @@ class TestResolveTargetFolder:
 
     def test_core_agents_default_to_general(self, registry_file):
         assert resolve_agent_target_folder("platform-builder") == "general"
-        assert resolve_agent_target_folder("agno") == "general"
+        assert resolve_agent_target_folder("oap") == "general"
 
     def test_unknown_agent_gets_its_own_folder(self, registry_file):
         assert resolve_agent_target_folder("research") == "agents/research"

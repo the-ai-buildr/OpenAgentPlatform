@@ -31,7 +31,7 @@ from app.settings import OPENWEBUI_UPLOADS_DIR, WORKSPACE_ROOT, settings
 from app.telemetry.otel import get_tracer
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer("agno.knowledge")
+tracer = get_tracer("oap.knowledge")
 
 _CACHE: dict[str, Any] = {}
 _CACHE_LOCK = threading.RLock()
@@ -51,7 +51,7 @@ def _get_content_db() -> Any:
     if _content_db is None:
         from agno.db.postgres import PostgresDb
 
-        _content_db = PostgresDb(id="agentos-knowledge", db_url=settings.database_url)
+        _content_db = PostgresDb(id="oap-knowledge", db_url=settings.database_url)
     return _content_db
 
 
@@ -122,7 +122,7 @@ def known_folders() -> list[str]:
 
 
 def get_all_knowledge_list() -> list[Any]:
-    """Knowledge bases to hand to AgentOS; empty when embeddings are off."""
+    """Knowledge bases to hand to the platform; empty when embeddings are off."""
     if not embeddings_available():
         logger.warning("No embedding credential configured - knowledge bases are not loaded")
         return []

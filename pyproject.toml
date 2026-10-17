@@ -1,7 +1,7 @@
 [project]
-name = "agno-agentos-openwebui"
+name = "oap"
 version = "1.0.0"
-description = "Agno AgentOS + FastAPI + OpenRouter + pgvector + Open WebUI, with OpenTelemetry tracing"
+description = "Open Agent Platform: FastAPI + OpenRouter + pgvector + Open WebUI, with OpenTelemetry tracing"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

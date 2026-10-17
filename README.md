@@ -1,12 +1,12 @@
 # OpenAgentPlatform
 
-A self-hosted agent platform: **Agno AgentOS** (FastAPI) behind **Open WebUI**,
+A self-hosted agent platform: **Open Agent Platform** (FastAPI) behind **Open WebUI**,
 with per-folder **pgvector** knowledge bases, automatic document indexing, an
 **OpenAI-compatible bridge**, an **MCP** endpoint, and **OpenTelemetry** traces
 in **Arize Phoenix**. Everything runs in Docker with one command.
 
 ```
-Open WebUI  →  AgentOS /v1 bridge  →  Agno agents + team  →  OpenRouter (chat)
+Open WebUI  →  OAP /v1 bridge      →  agents + team       →  OpenRouter (chat)
                        │                      │
                        │                      └──────────→  pgvector knowledge
                        └─ uploads → workspace_files/<folder> → auto-indexed
@@ -17,7 +17,7 @@ Open WebUI  →  AgentOS /v1 bridge  →  Agno agents + team  →  OpenRouter (c
 | | |
 |---|---|
 | **Agents** | `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, plus anything in `app/catalog/` |
-| **Team** | `agno` — routes a request to the right specialist |
+| **Team** | `oap` — routes a request to the right specialist |
 | **Chat models** | Any model on [OpenRouter](https://openrouter.ai/models) |
 | **Embeddings** | OpenRouter or any OpenAI-compatible embeddings server — see [Chat and embeddings](#chat-and-embeddings) |
 | **Storage** | PostgreSQL 17 + pgvector 0.8.7 |
@@ -33,11 +33,11 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 - [Quick start](#quick-start)
 - [Getting an OpenRouter key](#getting-an-openrouter-key)
 - [Chat and embeddings](#chat-and-embeddings)
-- [AgentOS control plane](#agentos-control-plane)
+- [Control plane](#control-plane)
 - [Local development](#local-development)
 - [Running the tests](#running-the-tests)
 - [Connecting Open WebUI](#connecting-open-webui)
-- [File routing and `#folder:` tags](#file-routing-and-folder-tags)
+- [File routing and](#file-routing-and-folder-tags) `#folder:` [tags](#file-routing-and-folder-tags)
 - [Creating your own agents](#creating-your-own-agents)
 - [Observability](#observability)
 - [MCP endpoint](#mcp-endpoint)
@@ -92,7 +92,7 @@ make status         # containers, /health, and the advertised models
 | Service | URL |
 |---|---|
 | Open WebUI | <http://localhost:3000> |
-| AgentOS API docs | <http://localhost:8000/docs> |
+| OAP API docs | <http://localhost:8000/docs> |
 | Health | <http://localhost:8000/health> |
 | Phoenix traces | <http://localhost:6006> |
 | MCP | <http://localhost:8000/mcp> |
@@ -116,6 +116,7 @@ this stack uses it instead of wiring up each provider.
 
 1. Sign up at <https://openrouter.ai>.
 2. Add credit under **Settings → Credits**. Pay-as-you-go; a few dollars is
+
    plenty for testing. (Some models have free tiers, but rate limits are tight.)
 3. Create a key at <https://openrouter.ai/keys>. It starts with `sk-or-v1-`.
 4. Paste it into `.env` as `OPENROUTER_API_KEY` and run `make restart`.
@@ -127,10 +128,10 @@ id surfaces as a 404 from OpenRouter on the first message.
 Defaults:
 
 ```ini
-AGNO_DEFAULT_MODEL=anthropic/claude-sonnet-4.5
-AGNO_BUILDER_MODEL=anthropic/claude-sonnet-4.5
-AGNO_ENGINEER_MODEL=anthropic/claude-sonnet-4.5
-AGNO_MANAGER_MODEL=openai/gpt-4o-mini
+OAP_DEFAULT_MODEL=anthropic/claude-sonnet-5.5
+OAP_BUILDER_MODEL=anthropic/claude-sonnet-5.5
+OAP_ENGINEER_MODEL=anthropic/claude-sonnet-5.5
+OAP_MANAGER_MODEL=anthropic/claude-haiku-5.5
 ```
 
 To check an id is live:
@@ -175,7 +176,7 @@ Leave `EMBEDDING_API_KEY` empty and the stack still runs: uploads are stored in
 ```bash
 make help            # every target, grouped
 make up              # start the full stack in the background
-make agentos         # AgentOS, Postgres and Phoenix only — no Open WebUI
+make oap         # API, Postgres and Phoenix only — no Open WebUI
 make dev             # full stack in the foreground with logs attached
 make logs-api        # tail one service
 make restart
@@ -227,40 +228,39 @@ pytest tests/test_paths.py -v          # one file
 pytest -k traversal                    # one concern
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, the test suite, `docker compose
-config` on both overlays, and boots the built image with no provider keys to
+CI (`.github/workflows/ci.yml`) runs lint, the test suite, `docker compose config` on both overlays, and boots the built image with no provider keys to
 assert it reports `degraded` and rejects an unauthenticated `/v1` call.
 
 ---
 
 ## Connecting Open WebUI
 
-There are two ways to wire Open WebUI to AgentOS. **Use the Pipe.** It is one
+There are two ways to wire Open WebUI to OAP. **Use the Pipe.** It is one
 step, it surfaces every agent as its own model, and it keeps file routing in
 one place.
 
-### Option A — the AgentOS Pipe (recommended)
+### Option A — the OAP Pipe (recommended)
 
 1. Open <http://localhost:3000> and sign in as the admin.
-2. **Workspace → Functions → `+`**.
+2. **Workspace → Functions →** `+`.
 3. Paste the contents of
-   [`openwebui_functions/agentos_pipe_function.py`](openwebui_functions/agentos_pipe_function.py)
-   and save it.
+
+   [`openwebui_functions/oap_pipe_function.py`](openwebui_functions/oap_pipe_function.py)
+    and save it.
 4. Toggle it **on**.
 5. Click the gear next to the function and set the valves:
-   - `agentos_base_url`: `http://agentos-api:8000` (the compose service name —
-     *not* `localhost`, which inside the Open WebUI container means itself)
+   - `oap_base_url`: `http://oap-api:8000` (the compose service name —
+    *not* `localhost`, which inside the Open WebUI container means itself)
    - `api_key`: your `OS_SECURITY_KEY` from `.env`
    - `auto_route_uploads`: leave **off** — the bridge already routes uploads
 6. Start a new chat. The model picker now lists:
-
    | Model | What it is |
-   |---|---|
-   | `AgentOS/Agno Platform Coordinator` | the `agno` team — routes to a specialist |
-   | `AgentOS/Platform Builder` | creates agents and knowledge folders |
-   | `AgentOS/Platform Engineer` | explains this codebase |
-   | `AgentOS/Platform Manager` | health, routing, re-indexing |
-   | `AgentOS/<your agent>` | anything you create |
+    |---|---|
+    | `OAP/Platform Coordinator` | the `oap` team — routes to a specialist |
+    | `OAP/Platform Builder` | creates agents and knowledge folders |
+    | `OAP/Platform Engineer` | explains this codebase |
+    | `OAP/Platform Manager` | health, routing, re-indexing |
+    | `OAP/<your agent>` | anything you create |
 
 Start with the Coordinator unless you know which specialist you want.
 
@@ -269,10 +269,10 @@ Start with the Coordinator unless you know which specialist you want.
 Compose already configures this (`OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS`),
 so the agents appear as models without installing anything. To set it up by
 hand: **Settings → Admin → Connections → OpenAI API**, URL
-`http://agentos-api:8000/v1`, key = `OS_SECURITY_KEY`.
+`http://oap-api:8000/v1`, key = `OS_SECURITY_KEY`.
 
 In this mode Open WebUI does not forward uploads to the bridge, so install
-[`openwebui_functions/agentos_file_router_filter.py`](openwebui_functions/agentos_file_router_filter.py)
+[`openwebui_functions/oap_file_router_filter.py`](openwebui_functions/oap_file_router_filter.py)
 as a **Filter** to route them. Set its `api_key` valve to `OS_SECURITY_KEY`.
 
 > Do not enable the Filter *and* the Pipe's `auto_route_uploads` at the same
@@ -337,7 +337,7 @@ indexed, and the response says so.
 
 ---
 
-## AgentOS control plane
+## Control plane
 
 [os.agno.com](https://os.agno.com) connects from your browser to the local API.
 
@@ -346,7 +346,7 @@ Endpoint:     http://localhost:8000
 Security key: OS_SECURITY_KEY from .env
 ```
 
-`make agentos` starts that API with Postgres and Phoenix and without Open
+`make oap` starts that API with Postgres and Phoenix and without Open
 WebUI. Chrome asks `os.agno.com` for local-network permission; allow it. The
 API answers that preflight with `Access-Control-Allow-Private-Network: true`.
 
@@ -406,7 +406,7 @@ You can still ask the Builder in chat:
 > search enabled.
 
 The Builder writes the spec to `app/agents/registry.json`, creates the folder,
-rebuilds the agent and re-registers it with AgentOS, so it shows up in
+rebuilds the agent and re-registers it with OAP, so it shows up in
 `/v1/models`, in `/agents` and in the Open WebUI model picker without a
 restart.
 
@@ -429,7 +429,7 @@ The registry is a plain file you can edit and commit:
 ```
 
 `platform-builder`, `platform-engineer`, `platform-manager`,
-`platform-telemetry` and `agno` are reserved and cannot be overwritten.
+`platform-telemetry` and `oap` are reserved and cannot be overwritten.
 
 ---
 
@@ -459,7 +459,7 @@ make phoenix-mcp AGENT=cursor
 
 `AGENT` can be `claude`, `codex`, `gemini`, `cursor`, `opencode` or `vscode`.
 
-In Phoenix, look at **Traces** and filter by service `agno-agentos-api`. A
+In Phoenix, look at **Traces** and filter by service `oap-api`. A
 chat turn looks like: FastAPI request → `openwebui.chat_stream` → the Agno
 agent run → the OpenRouter HTTP call → any pgvector query.
 
@@ -473,7 +473,7 @@ agent run → the OpenRouter HTTP call → any pgvector query.
 
 To send traces to a hosted backend (Arize, Honeycomb, Grafana Cloud) instead,
 point `OTEL_EXPORTER_OTLP_ENDPOINT` at its OTLP/HTTP base URL, add
-`OTEL_EXPORTER_OTLP_HEADERS`, and drop the `agentos-otel` service.
+`OTEL_EXPORTER_OTLP_HEADERS`, and drop the `oap-otel` service.
 
 Phoenix keeps traces in the `otel_data` volume. It is not a system of record —
 `make destroy-volumes` discards them.
@@ -482,7 +482,7 @@ Phoenix keeps traces in the `otel_data` volume. It is not a system of record —
 
 ## MCP endpoint
 
-AgentOS exposes itself as an MCP server at `/mcp`, so an MCP client (Claude
+OAP exposes itself as an MCP server at `/mcp`, so an MCP client (Claude
 Desktop, Cursor, another agent) can drive the agents directly.
 
 ```
@@ -531,7 +531,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 a single host, inject these from your orchestrator's secret store (Docker
 secrets, SOPS, Vault, your platform's env vars) rather than a file on disk.
 
-**2. Set `PUBLIC_BASE_URL`.** Required by `make prod-up`; Open WebUI uses it to
+**2. Set** `PUBLIC_BASE_URL`**.** Required by `make prod-up`; Open WebUI uses it to
 build absolute links.
 
 ```ini
@@ -621,7 +621,7 @@ A minimal nightly job:
 Open WebUI's volume is not covered by `pg_dump`. Snapshot it separately:
 
 ```bash
-docker run --rm -v agno-agentos-openwebui_openwebui_data:/data -v "$PWD:/out" \
+docker run --rm -v oap_openwebui_data:/data -v "$PWD:/out" \
   alpine tar czf /out/openwebui-data.tgz -C /data .
 ```
 
@@ -635,23 +635,23 @@ re-sync a folder, or `POST /v1/files/route` again.
 Every variable is documented inline in
 [`.env.example`](.env.example), grouped by concern. The ones that matter most:
 
-| Variable | Default | Notes |
-|---|---|---|
-| `OPENROUTER_API_KEY` | — | Required. Without it the API runs degraded. |
-| `AGNO_DEFAULT_MODEL` | `anthropic/claude-sonnet-4.5` | Must exist in the OpenRouter catalogue |
-| `EMBEDDING_API_KEY` | — | Optional. Empty reuses `OPENROUTER_API_KEY` only when the base URL is OpenRouter. |
-| `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | Set to `https://openrouter.ai/api/v1` to embed through OpenRouter |
-| `WEBUI_NAME` | `Open Agent Platform` | Open WebUI appends ` (Open WebUI)` in the sidebar |
-| `EMBEDDING_DIMENSIONS` | `1536` | Must match the model |
-| `OS_SECURITY_KEY` | generated | Bearer token for the API, `/v1` and `/mcp` |
-| `ENABLE_FILE_WATCHER` | `true` | Auto-index `workspace_files/` |
-| `WATCHER_DEBOUNCE_SECONDS` | `2.0` | Quiet period before indexing |
-| `MAX_STAGED_UPLOAD_BYTES` | `67108864` | 64 MB cap on staged uploads |
-| `OTEL_ENABLED` | `true` | Tracing master switch |
-| `ENABLE_MCP_SERVER` | `true` | Serve `/mcp` |
-| `DB_PASS` | generated | Baked into the volume on first start |
-| `WEBUI_SECRET_KEY` | generated | Open WebUI session signing |
-| `PUBLIC_BASE_URL` | — | Required by `make prod-up` |
+| Variable                   | Default                       | Notes                                                                             |
+| -------------------------- | ----------------------------- | --------------------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY`       | —                             | Required. Without it the API runs degraded.                                       |
+| `OAP_DEFAULT_MODEL`       | `anthropic/claude-sonnet-4.5` | Must exist in the OpenRouter catalogue                                            |
+| `EMBEDDING_API_KEY`        | —                             | Optional. Empty reuses `OPENROUTER_API_KEY` only when the base URL is OpenRouter. |
+| `EMBEDDING_BASE_URL`       | `https://api.openai.com/v1`   | Set to `https://openrouter.ai/api/v1` to embed through OpenRouter                 |
+| `WEBUI_NAME`               | `Open Agent Platform`         | Open WebUI appends `(Open WebUI)` in the sidebar                                  |
+| `EMBEDDING_DIMENSIONS`     | `1536`                        | Must match the model                                                              |
+| `OS_SECURITY_KEY`          | generated                     | Bearer token for the API, `/v1` and `/mcp`                                        |
+| `ENABLE_FILE_WATCHER`      | `true`                        | Auto-index `workspace_files/`                                                     |
+| `WATCHER_DEBOUNCE_SECONDS` | `2.0`                         | Quiet period before indexing                                                      |
+| `MAX_STAGED_UPLOAD_BYTES`  | `67108864`                    | 64 MB cap on staged uploads                                                       |
+| `OTEL_ENABLED`             | `true`                        | Tracing master switch                                                             |
+| `ENABLE_MCP_SERVER`        | `true`                        | Serve `/mcp`                                                                      |
+| `DB_PASS`                  | generated                     | Baked into the volume on first start                                              |
+| `WEBUI_SECRET_KEY`         | generated                     | Open WebUI session signing                                                        |
+| `PUBLIC_BASE_URL`          | —                             | Required by `make prod-up`                                                        |
 
 ---
 
@@ -682,15 +682,15 @@ The `pgdata` volume was initialised with a *different* `DB_PASS`. Postgres only
 reads `POSTGRES_PASSWORD` when it creates the data directory, so editing `.env`
 afterwards changes the client side only.
 
-**Do not run `make destroy-volumes`.** That deletes every session, embedding,
+**Do not run** `make destroy-volumes`**.** That deletes every session, embedding,
 account and chat to fix a password mismatch. Change the password in the
 database instead:
 
 ```bash
 # Start only the database, then set the role's password to the new value
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d agentos-db
-docker compose -f docker-compose.yml -f docker-compose.dev.yml exec agentos-db \
-  psql -U ai -d agentos -c "ALTER USER ai WITH PASSWORD 'the-value-now-in-your-env';"
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d oap-db
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec oap-db \
+  psql -U ai -d oap -c "ALTER USER ai WITH PASSWORD 'the-value-now-in-your-env';"
 make restart
 ```
 
@@ -701,9 +701,11 @@ If you cannot authenticate at all, start the container once with
 
 1. `make models` — if that fails, the API is down. `make logs-api`.
 2. If it works from the host but Open WebUI shows nothing, the Pipe's
-   `agentos_base_url` is probably `http://localhost:8000`. Inside the Open WebUI
-   container `localhost` is Open WebUI. Use `http://agentos-api:8000`.
+
+   `oap_base_url` is probably `http://localhost:8000`. Inside the Open WebUI
+    container `localhost` is Open WebUI. Use `http://oap-api:8000`.
 3. 401 in the logs means the Pipe's `api_key` valve does not match
+
    `OS_SECURITY_KEY`.
 
 ### Uploaded files are not indexed
@@ -769,7 +771,7 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 .
 ├── app/
 │   ├── settings.py              Typed configuration from the environment
-│   ├── main.py                  Entrypoint: tracing, AgentOS, lifespan, /health
+│   ├── main.py                  Entrypoint: tracing, OAP, lifespan, /health
 │   ├── control_plane.py         Allows os.agno.com to call localhost
 │   ├── catalog_loader.py        Loads app/catalog into the registry and WebUI
 │   ├── catalog/                 agents/, teams/, workflows/ JSON definitions

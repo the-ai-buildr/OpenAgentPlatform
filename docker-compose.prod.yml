@@ -6,7 +6,7 @@
 # reachable on the compose network only.
 
 services:
-  agentos-db:
+  oap-db:
     # No published port: reach it with `make db-shell` or `docker compose exec`.
     logging: &default-logging
       driver: json-file
@@ -18,15 +18,15 @@ services:
         limits:
           memory: 2g
 
-  agentos-otel:
+  oap-otel:
     # Phoenix holds trace payloads; keep it off the public interface.
     ports: !override []
     logging: *default-logging
 
-  agentos-api:
+  oap-api:
     restart: always
     environment:
-      AGNO_DEBUG: "false"
+      OAP_DEBUG: "false"
       OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-production}
     # No source bind mount and no --reload: the image is the artefact.
     volumes: !override

@@ -14,7 +14,7 @@ calling the real HTTP endpoint — not from the pasted imports.
 ## 1. What this system is
 
 Open WebUI is the chat front end. It speaks the OpenAI chat-completions
-protocol, so the AgentOS container exposes a small `/v1` bridge that translates
+protocol, so the OAP API exposes a small `/v1` bridge that translates
 OpenAI requests into Agno agent and team runs. Documents the user uploads are
 copied into a per-topic folder on disk; a filesystem watcher embeds them into a
 per-folder pgvector table, and the agent bound to that folder retrieves from
@@ -28,7 +28,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │             │ Authorization: OS_SECURITY_KEY │
                            │             ▼                                │
                            │   ┌──────────────────────────────────────┐   │
-                           │   │ agentos-api :8000                    │   │
+                           │   │ oap-api :8000                        │   │
                            │   │                                      │   │
                            │   │  /v1  bridge      (this repo)        │   │
                            │   │    ├─ GET  /v1/models                │   │
@@ -44,7 +44,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │   │          platform-manager            │   │
                            │   │          platform-telemetry          │   │
                            │   │          + app/catalog + registry    │   │
-                           │   │  team:   agno (coordinator)          │   │
+                           │   │  team:   oap (coordinator)           │   │
                            │   │          + catalog teams             │   │
                            │   │  workflows: catalog workflows        │   │
                            │   │                                      │   │
@@ -55,7 +55,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │  LLM  │             │              │         │
                            └───────┼─────────────┼──────────────┼─────────┘
                                    ▼             ▼              ▼
-                            OpenRouter     OpenRouter or    agentos-otel
+                            OpenRouter     OpenRouter or    oap-otel
                             /api/v1        any OpenAI-compat. (Phoenix)
                             chat +         embeddings host     :6006
                             embeddings                         assistant uses
@@ -65,7 +65,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
    volumes
      ./workspace_files  ──▶ /app/workspace_files   (watched, read-write)
      openwebui_data     ──▶ /app/openwebui_data    (read-only; upload source)
-     pgdata             ──▶ agentos-db  postgres 17 + pgvector 0.8.7
+     pgdata             ──▶ oap-db  postgres 17 + pgvector 0.8.7
                               ai.agno_*  AgentOS sessions, runs, metrics, …
                               ai.kb_*    one vector table per workspace folder
 ```
@@ -77,7 +77,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
 3. The bridge takes the last user message, pulls out any `#folder:<path>` tag,
    and stages attached uploads into the resolved folder (idempotent — a
    byte-identical file already in place is not re-copied or re-embedded).
-4. The model id resolves to the `agno` team or a single agent.
+4. The model id resolves to the `oap` team or a single agent.
 5. `arun(...)` streams `RunContentEvent`s, which are re-encoded as OpenAI SSE
    chunks terminated by `data: [DONE]`.
 
@@ -125,7 +125,7 @@ Each hypothesis from the brief, confirmed or rejected, with what was done.
 | 5 | **`/v1` bridge had no auth check** even though Open WebUI sends the key | **Critical** | `require_bridge_auth` on the router as a router-level dependency, `hmac.compare_digest`, accepts `Authorization: Bearer` or `X-API-Key`. Empty key = open with a one-shot warning (documented local mode); production compose refuses to start without one. Covered by 8 tests. |
 | 6 | **Path traversal check used a string prefix** (`str(target).startswith(str(root))`) | **Critical** | `resolve_within()` uses `Path.resolve()` + `is_relative_to`. The prefix form accepts `/app/workspace_files_evil/...`; there is a regression test for exactly that, and for symlink escape. Mutating the fix back to `startswith` makes the suite fail. |
 | 7 | **`read_source_file` could expose secrets** — it was scoped to all of `/app` | **Critical** | Allowlisted to `app/` and `openwebui_functions/`, restricted to source extensions, dotfiles refused, 200 KB cap. |
-| 8 | **OTLP endpoint semantics** | Required | `OTEL_EXPORTER_OTLP_ENDPOINT` is a *base* URL per the OpenTelemetry spec — the SDK appends `/v1/traces`. The original put the full path in it, so any component doing standard autoconfiguration would post to `/v1/traces/v1/traces`. It now holds `http://agentos-otel:6006` and the app appends the path. |
+| 8 | **OTLP endpoint semantics** | Required | `OTEL_EXPORTER_OTLP_ENDPOINT` is a *base* URL per the OpenTelemetry spec — the SDK appends `/v1/traces`. The original put the full path in it, so any component doing standard autoconfiguration would post to `/v1/traces/v1/traces`. It now holds `http://oap-otel:6006` and the app appends the path. |
 | 9 | **Phoenix `4317:4317` host mapping** | Nit | Removed. 4317 is Phoenix's gRPC port and is correct *inside* the network, but the app exports over OTLP/HTTP on 6006, so publishing 4317 to the host only invited a port clash. The UI port is now bound to `127.0.0.1`. |
 | 10 | **OpenRouter does not serve embeddings** | **Critical** | Verified against the live catalogue: `https://openrouter.ai/api/v1/models` returns 470 models, none of them embedding models, and `openai/text-embedding-3-small` is absent. Embedding every document through OpenRouter would have failed on the first upload. Embeddings are now a separate provider (`EMBEDDING_BASE_URL`, default `https://api.openai.com/v1`, model `text-embedding-3-small` — the OpenAI-native id, not the `openai/`-prefixed OpenRouter form). The OpenRouter key is only reused as an embedding key when the embedding base URL really is OpenRouter. |
 | 11 | **Embedding dimension vs PgVector** | Required | `EMBEDDING_DIMENSIONS` is explicit (1536) and passed to `OpenAIEmbedder`; PgVector sizes its column from the embedder. `.env.example` and the README state that changing the model invalidates existing `kb_*` tables. |
@@ -160,7 +160,7 @@ stack. Each had a passing-looking implementation beforehand.
 |---|---|---|---|
 | 28 | **Routes added after `AgentOS.get_app()` are unreachable.** AgentOS appends a catch-all `Mount('')` to the app, so the whole `/v1` router 404'd even though it appeared in `/openapi.json`. The custom `/health` was shadowed by AgentOS's own, which returns only `{"status": "ok"}` — the degraded report was never visible. | **Critical** | Register `/health` and the bridge on a `FastAPI` *base app*, then hand it to `AgentOS(base_app=..., on_route_conflict="preserve_base_app")`. This is the documented way to compose AgentOS with your own routes. Confirmed by dumping `app.routes` in the running container. |
 | 29 | **SQLAlchemy was still untraced after the ordering fix.** `opentelemetry-instrumentation-sqlalchemy` declares `sqlalchemy<2.1.0` and, outside that range, logs an error and instruments *nothing*. The pin resolved to SQLAlchemy 2.1.5, so every database query was invisible. Agno sets no upper bound, so this would silently recur on any unpinned rebuild. | Required | Pinned `SQLAlchemy==2.0.55` with the reason in `requirements.txt`. Verified by reading SQL spans out of Phoenix's API. So hypothesis #4 had *two* independent causes; fixing the import order alone would have looked correct and changed nothing. |
-| 30 | **A provider failure reached the user as a normal assistant reply.** Agno does not raise when OpenRouter rejects a key — it completes the run with `status=RunStatus.error` and puts the provider's text in `content`. The bridge passed that straight through, so an invalid key produced an HTTP 200 and a chat bubble reading "User not found.". Streaming was worse: an empty message and no error at all. | **Critical** | `run_failed()` inspects the run status; non-streaming answers `502 Agent run failed: <message>`, streaming emits a visible `[agentos error] …` chunk before `[DONE]`. Verified live against a deliberately invalid key. |
+| 30 | **A provider failure reached the user as a normal assistant reply.** Agno does not raise when OpenRouter rejects a key — it completes the run with `status=RunStatus.error` and puts the provider's text in `content`. The bridge passed that straight through, so an invalid key produced an HTTP 200 and a chat bubble reading "User not found.". Streaming was worse: an empty message and no error at all. | **Critical** | `run_failed()` inspects the run status; non-streaming answers `502 Agent run failed: <message>`, streaming emits a visible `[oap error] …` chunk before `[DONE]`. Verified live against a deliberately invalid key. |
 | 31 | **`/v1/models` returned 500 with no LLM key.** Building the catalogue constructed the agents, which constructed a model, which raised. The degraded mode that was supposed to be graceful returned `Internal Server Error`. | Required | `describe_agents()` returns an empty list and `get_runner()` returns `None` when no key is set; `/v1/chat/completions` answers `503` naming the missing variable. Covered by `tests/test_degraded_mode.py`. |
 
 ### Rejected or downgraded
@@ -232,10 +232,10 @@ with a coding agent.
 connects to `http://localhost:8000` with `OS_SECURITY_KEY`. Chrome's
 private-network preflight is allowed by `app/control_plane.py`, which sets
 Starlette's `allow_private_network` after AgentOS installs CORS. `make
-agentos` starts the API, Postgres and Phoenix without Open WebUI.
+oap` starts the API, Postgres and Phoenix without Open WebUI.
 
 **Reserved ids** are `platform-builder`, `platform-engineer`,
-`platform-manager`, `platform-telemetry` and `agno`.
+`platform-manager`, `platform-telemetry` and `oap`.
 
 ---
 
@@ -256,7 +256,7 @@ agentos` starts the API, Postgres and Phoenix without Open WebUI.
 | Tracing really works | Queried Phoenix's own API for stored spans | SQL spans present with `db.statement` attributes |
 | Watcher | Wrote a file into `workspace_files/sops/` | Debounced event logged ~2 s later with the honest "no embedding key" reason |
 | Open WebUI integration | Ran Open WebUI v0.12.3 against the bridge as an OpenAI connection | Its `/api/models` lists all four agents with the right display names |
-| Provider errors surface | Chat with a deliberately invalid OpenRouter key | `502 Agent run failed: User not found.`, and `[agentos error] …` in the stream |
+| Provider errors surface | Chat with a deliberately invalid OpenRouter key | `502 Agent run failed: User not found.`, and `[oap error] …` in the stream |
 | Degraded boot | Container started with no provider keys and an unreachable database | `/health` → `degraded` listing all three reasons, `/v1/models` → `[]`, `/v1/chat/completions` → 503 naming the variable, 401 still enforced |
 
 See the "Verified running vs statically checked" section of the pull request

@@ -33,9 +33,9 @@ RUN mkdir -p /app/workspace_files/general \
              /app/workspace_files/sops \
              /app/workspace_files/contracts \
              /app/openwebui_data \
-    && useradd --create-home --uid 10001 agentos \
-    && chown -R agentos:agentos /app
-USER agentos
+    && useradd --create-home --uid 10001 oap \
+    && chown -R oap:oap /app
+USER oap
 
 EXPOSE 8000
 

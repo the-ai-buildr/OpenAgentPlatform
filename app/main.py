@@ -1,4 +1,4 @@
-"""AgentOS entrypoint.
+"""OAP entrypoint.
 
 Two ordering constraints are load-bearing here.
 
@@ -21,10 +21,10 @@ from app.settings import settings
 from app.telemetry.otel import get_otel_status, init_tracing, instrument_app
 
 logging.basicConfig(
-    level=logging.DEBUG if settings.agno_debug else logging.INFO,
+    level=logging.DEBUG if settings.oap_debug else logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
 )
-logger = logging.getLogger("agentos")
+logger = logging.getLogger("oap")
 
 init_tracing()
 
@@ -63,8 +63,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 base_app = FastAPI(
-    title="Agno AgentOS platform",
-    description="Agno AgentOS with an OpenAI-compatible bridge for Open WebUI.",
+    title="Open Agent Platform",
+    description="Open Agent Platform with an OpenAI-compatible bridge for Open WebUI.",
     lifespan=lifespan,
 )
 base_app.include_router(openwebui_router)
@@ -84,13 +84,13 @@ def health() -> dict[str, Any]:
 
     return {
         "status": "ok" if not degraded_reasons else "degraded",
-        "agentos_id": settings.agentos_id,
-        "agentos_running": _agent_os is not None,
+        "oap_id": settings.oap_id,
+        "oap_running": _oap is not None,
         "degraded_reasons": degraded_reasons,
         "llm": {
             "provider": "openrouter",
             "configured": settings.llm_configured,
-            "default_model": settings.agno_default_model,
+            "default_model": settings.oap_default_model,
         },
         "embeddings": {
             "configured": km.embeddings_available(),
@@ -107,17 +107,17 @@ def health() -> dict[str, Any]:
             "chat_completions": "/v1/chat/completions",
             "file_route": "/v1/files/route",
             "watcher_status": "/v1/files/watcher-status",
-            "mcp": "/mcp" if (_agent_os is not None and settings.enable_mcp_server) else None,
+            "mcp": "/mcp" if (_oap is not None and settings.enable_mcp_server) else None,
         },
     }
 
 
-def _build_agent_os() -> tuple[AgentOS, FastAPI]:
+def _build_oap() -> tuple[AgentOS, FastAPI]:
     runtime.initialize()
-    agent_os = AgentOS(
-        id=settings.agentos_id,
+    oap = AgentOS(
+        id=settings.oap_id,
         name="Open Agent Platform",
-        description="Local AgentOS. Connect os.agno.com to http://localhost:8000.",
+        description="Local Open Agent Platform. Connect os.agno.com to http://localhost:8000.",
         agents=runtime.get_all_agents_list(),
         teams=[runtime.get_team(), *runtime.get_catalog_teams()],
         workflows=runtime.get_catalog_workflows(),
@@ -126,32 +126,32 @@ def _build_agent_os() -> tuple[AgentOS, FastAPI]:
         registry=runtime.get_registry(),
         settings=AgnoAPISettings(os_security_key=settings.os_security_key.strip() or None),
         mcp=settings.enable_mcp_server,
-        telemetry=settings.agno_telemetry,
+        telemetry=settings.oap_telemetry,
         lifespan=lifespan,
         base_app=base_app,
         on_route_conflict="preserve_base_app",
     )
-    app = agent_os.get_app()
+    app = oap.get_app()
     enable_private_network_cors(app)
-    return agent_os, app
+    return oap, app
 
 
-_agent_os: AgentOS | None = None
+_oap: AgentOS | None = None
 
 if settings.llm_configured:
-    _agent_os, app = _build_agent_os()
-    _running_os = _agent_os
+    _oap, app = _build_oap()
+    _running = _oap
 
     def _resync() -> None:
-        """Re-register dynamically created agents with the running AgentOS."""
+        """Re-register dynamically created agents with the running platform."""
         try:
-            _running_os.agents = runtime.get_all_agents_list()
-            _running_os.teams = [runtime.get_team(), *runtime.get_catalog_teams()]
-            _running_os.workflows = runtime.get_catalog_workflows()
-            _running_os.resync(app)
-            logger.info("AgentOS resynced with %d agents", len(_running_os.agents or []))
+            _running.agents = runtime.get_all_agents_list()
+            _running.teams = [runtime.get_team(), *runtime.get_catalog_teams()]
+            _running.workflows = runtime.get_catalog_workflows()
+            _running.resync(app)
+            logger.info("OAP resynced with %d agents", len(_running.agents or []))
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("AgentOS resync failed: %s", exc)
+            logger.warning("OAP resync failed: %s", exc)
 
     runtime.on_agents_changed(_resync)
 else:

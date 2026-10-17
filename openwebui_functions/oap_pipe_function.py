@@ -1,18 +1,18 @@
 """
-title: AgentOS
+title: OAP
 author: the-ai-buildr
 version: 2.0.0
 license: MIT
 description: >-
-  Manifold pipe that exposes every Agno AgentOS agent and the coordinator team
-  as Open WebUI models, streaming responses through the AgentOS /v1 bridge.
+  Manifold pipe that exposes every OAP agent and the coordinator team
+  as Open WebUI models, streaming responses through the OAP /v1 bridge.
 requirements: requests
 """
 
 # Install: Open WebUI -> Workspace -> Functions -> + -> paste this file -> Save,
 # then enable it and set the api_key valve to your OS_SECURITY_KEY.
 #
-# File routing is handled by the AgentOS bridge itself, so `auto_route_uploads`
+# File routing is handled by the OAP bridge itself, so `auto_route_uploads`
 # defaults to False. Turning it on makes this function route uploads too; the
 # bridge deduplicates by content hash, so it is safe but redundant.
 
@@ -25,9 +25,9 @@ from pydantic import BaseModel, Field
 
 class Pipe:
     class Valves(BaseModel):
-        agentos_base_url: str = Field(
-            default="http://agentos-api:8000",
-            description="Base URL of the AgentOS API as seen from the Open WebUI container.",
+        oap_base_url: str = Field(
+            default="http://oap-api:8000",
+            description="Base URL of the OAP API as seen from the Open WebUI container.",
         )
         api_key: str = Field(
             default="",
@@ -46,8 +46,8 @@ class Pipe:
 
     def __init__(self) -> None:
         self.type = "manifold"
-        self.id = "agentos"
-        self.name = "AgentOS/"
+        self.id = "oap"
+        self.name = "OAP/"
         self.valves = self.Valves()
 
     # -- helpers ---------------------------------------------------------- #
@@ -58,7 +58,7 @@ class Pipe:
         return headers
 
     def _url(self, path: str) -> str:
-        return f"{self.valves.agentos_base_url.rstrip('/')}{path}"
+        return f"{self.valves.oap_base_url.rstrip('/')}{path}"
 
     def _strip_prefix(self, model_id: str) -> str:
         # Open WebUI prefixes manifold models with "<function id>."
@@ -74,7 +74,7 @@ class Pipe:
                 for model in response.json().get("data", [])
             ]
         except Exception as exc:
-            return [{"id": "error", "name": f"AgentOS unreachable: {exc}"}]
+            return [{"id": "error", "name": f"OAP unreachable: {exc}"}]
 
     def pipe(self, body: Dict[str, Any], __files__: Any = None, __user__: Any = None):
         model = self._strip_prefix(body.get("model", ""))
@@ -105,9 +105,9 @@ class Pipe:
             return data["choices"][0]["message"]["content"]
         except requests.HTTPError as exc:
             detail = exc.response.text[:500] if exc.response is not None else str(exc)
-            return f"AgentOS error ({exc.response.status_code if exc.response else '?'}): {detail}"
+            return f"OAP error ({exc.response.status_code if exc.response else '?'}): {detail}"
         except Exception as exc:
-            return f"AgentOS error: {exc}"
+            return f"OAP error: {exc}"
 
     def _stream(self, payload: Dict[str, Any]) -> Union[Generator, Iterator]:
         with requests.post(

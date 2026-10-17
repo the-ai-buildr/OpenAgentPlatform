@@ -44,7 +44,7 @@ def test_chat_explains_the_missing_key_instead_of_500(no_llm):
     response = no_llm.post(
         "/v1/chat/completions",
         headers=AUTH,
-        json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "oap", "messages": [{"role": "user", "content": "hi"}]},
     )
     assert response.status_code == 503
     assert "OPENROUTER_API_KEY" in response.json()["detail"]
@@ -52,7 +52,7 @@ def test_chat_explains_the_missing_key_instead_of_500(no_llm):
 
 def test_runner_resolution_returns_none(monkeypatch):
     monkeypatch.setattr(runtime.settings, "openrouter_api_key", "")
-    assert runtime.get_runner("agno") is None
+    assert runtime.get_runner("oap") is None
     assert runtime.get_runner(None) is None
 
 

@@ -1,6 +1,6 @@
-"""OpenAI-compatible `/v1` surface that lets Open WebUI talk to AgentOS.
+"""OpenAI-compatible `/v1` surface that lets Open WebUI talk to OAP.
 
-Open WebUI speaks the OpenAI chat-completions protocol; AgentOS speaks Agno.
+Open WebUI speaks the OpenAI chat-completions protocol; OAP runs the agents.
 This router is the translation layer, plus the single place where uploaded
 files are routed into workspace folders.
 """
@@ -35,7 +35,7 @@ from app.settings import settings
 from app.telemetry.otel import get_tracer
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer("agno.bridge")
+tracer = get_tracer("oap.bridge")
 
 FOLDER_TAG = re.compile(r"\s*#folder:(\S+)\s*")
 
@@ -259,8 +259,8 @@ async def _stream_completion(
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     yield _chunk(model, completion_id, {"role": "assistant", "content": ""})
     with tracer.start_as_current_span("openwebui.chat_stream") as span:
-        span.set_attribute("agno.model", model)
-        span.set_attribute("agno.session_id", session_id)
+        span.set_attribute("oap.model", model)
+        span.set_attribute("oap.session_id", session_id)
         try:
             async for event in runner.arun(
                 prompt, stream=True, session_id=session_id, user_id=user_id
@@ -272,14 +272,12 @@ async def _stream_completion(
                 failure = _event_error(event)
                 if failure:
                     logger.error("Run failed for model %s: %s", model, failure)
-                    span.set_attribute("agno.run_failed", True)
-                    yield _chunk(
-                        model, completion_id, {"content": f"\n\n[agentos error] {failure}"}
-                    )
+                    span.set_attribute("oap.run_failed", True)
+                    yield _chunk(model, completion_id, {"content": f"\n\n[oap error] {failure}"})
         except Exception as exc:
             logger.exception("Streaming run failed for model %s", model)
             span.record_exception(exc)
-            yield _chunk(model, completion_id, {"content": f"\n\n[agentos error] {exc}"})
+            yield _chunk(model, completion_id, {"content": f"\n\n[oap error] {exc}"})
     yield _chunk(model, completion_id, {}, finish="stop")
     yield "data: [DONE]\n\n"
 
@@ -288,8 +286,8 @@ async def _complete(
     runner: Any, prompt: str, model: str, session_id: str, user_id: str
 ) -> dict[str, Any]:
     with tracer.start_as_current_span("openwebui.chat_completion") as span:
-        span.set_attribute("agno.model", model)
-        span.set_attribute("agno.session_id", session_id)
+        span.set_attribute("oap.model", model)
+        span.set_attribute("oap.session_id", session_id)
         try:
             result = await runner.arun(prompt, session_id=session_id, user_id=user_id)
         except Exception as exc:
@@ -302,7 +300,7 @@ async def _complete(
         if run_failed(result):
             message = getattr(result, "content", None) or "the agent run failed"
             logger.error("Run failed for model %s: %s", model, message)
-            span.set_attribute("agno.run_failed", True)
+            span.set_attribute("oap.run_failed", True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Agent run failed: {message}"
             )

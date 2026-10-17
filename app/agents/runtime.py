@@ -27,7 +27,8 @@ CORE_AGENT_IDS = (
     "platform-manager",
     "platform-telemetry",
 )
-TEAM_ID = "agno"
+TEAM_ID = "oap"
+TEAM_NAME = "Platform Coordinator"
 
 _lock = threading.RLock()
 _core_agents: dict[str, Any] = {}
@@ -41,12 +42,12 @@ _on_change: list[Callable[[], None]] = []
 
 
 def get_db() -> Any:
-    """Shared AgentOS database. Built lazily so importing this module is cheap."""
+    """Shared platform database. Built lazily so importing this module is cheap."""
     global _db
     if _db is None:
         from agno.db.postgres import PostgresDb
 
-        _db = PostgresDb(id="agentos-runtime", db_url=settings.database_url)
+        _db = PostgresDb(id="oap-runtime", db_url=settings.database_url)
     return _db
 
 
@@ -59,10 +60,10 @@ def build_model(model_id: str | None = None) -> Any:
             "OPENROUTER_API_KEY is not set. Add it to .env and restart the API container."
         )
     return OpenRouter(
-        id=model_id or settings.agno_default_model,
+        id=model_id or settings.oap_default_model,
         api_key=settings.openrouter_api_key,
         base_url=settings.openrouter_base_url,
-        max_tokens=settings.agno_model_max_tokens,
+        max_tokens=settings.oap_model_max_tokens,
     )
 
 
@@ -91,7 +92,7 @@ def _build_core_agents() -> dict[str, Any]:
         id="platform-builder",
         name="Platform Builder",
         role="Creates and configures specialist agents and their knowledge folders",
-        model=build_model(settings.agno_builder_model),
+        model=build_model(settings.oap_builder_model),
         tools=[*tools.REGISTRY_TOOLS, *tools.WORKSPACE_TOOLS],
         instructions=[
             "You build and maintain the specialist agents on this platform.",
@@ -105,8 +106,8 @@ def _build_core_agents() -> dict[str, Any]:
     engineer = Agent(
         id="platform-engineer",
         name="Platform Engineer",
-        role="Explains and debugs the AgentOS codebase",
-        model=build_model(settings.agno_engineer_model),
+        role="Explains and debugs the OAP codebase",
+        model=build_model(settings.oap_engineer_model),
         tools=[
             *tools.SOURCE_TOOLS,
             tools.list_registered_agents,
@@ -114,7 +115,7 @@ def _build_core_agents() -> dict[str, Any]:
             tools.inspect_file_watcher_status,
         ],
         instructions=[
-            "You answer questions about how this AgentOS deployment is implemented.",
+            "You answer questions about how this OAP deployment is implemented.",
             "Read source files before describing behaviour; never guess at code you have not read.",
             "You cannot read configuration or secret files - say so rather than speculating.",
         ],
@@ -125,7 +126,7 @@ def _build_core_agents() -> dict[str, Any]:
         id="platform-manager",
         name="Platform Manager",
         role="Operates the platform: health, routing and knowledge hygiene",
-        model=build_model(settings.agno_manager_model),
+        model=build_model(settings.oap_manager_model),
         tools=[
             *tools.HEALTH_TOOLS,
             tools.create_workspace_directory,
@@ -144,8 +145,8 @@ def _build_core_agents() -> dict[str, Any]:
     telemetry = Agent(
         id="platform-telemetry",
         name="Platform Telemetry",
-        role="Reads Phoenix traces and spans exported by this AgentOS",
-        model=build_model(settings.agno_manager_model),
+        role="Reads Phoenix traces and spans exported by this OAP",
+        model=build_model(settings.oap_manager_model),
         tools=[
             phoenix_tools.list_phoenix_projects,
             phoenix_tools.list_recent_traces,
@@ -205,9 +206,9 @@ def _build_team(members: list[Any]) -> Any:
 
     return Team(
         id=TEAM_ID,
-        name="Agno Platform Coordinator",
+        name=TEAM_NAME,
         members=members,
-        model=build_model(settings.agno_manager_model),
+        model=build_model(settings.oap_manager_model),
         db=get_db(),
         instructions=[
             "Route platform work to the right specialist.",
@@ -236,7 +237,7 @@ def _build_catalog_teams(agents: dict[str, Any]) -> dict[str, Any]:
             id=spec.team_id,
             name=spec.name,
             members=[agents[member] for member in spec.members],
-            model=build_model(settings.agno_manager_model),
+            model=build_model(settings.oap_manager_model),
             db=get_db(),
             instructions=[spec.instructions] if spec.instructions else None,
             markdown=True,
@@ -288,7 +289,7 @@ def initialize() -> None:
 
 
 def reload_dynamic_agents() -> dict[str, Any]:
-    """Rebuild custom agents from the registry and notify AgentOS."""
+    """Rebuild custom agents from the registry and notify the platform."""
     catalog_loader.refresh(notify=False)
     with _lock:
         if not _core_agents:
@@ -306,7 +307,7 @@ def reload_dynamic_agents() -> dict[str, Any]:
 
 
 def on_agents_changed(callback: Callable[[], None]) -> None:
-    """Register a listener fired after the agent set is rebuilt (AgentOS resync)."""
+    """Register a listener fired after the agent set is rebuilt (platform resync)."""
     if callback not in _on_change:
         _on_change.append(callback)
 
@@ -342,7 +343,7 @@ def get_all_agents_list() -> list[Any]:
 def get_registry() -> Any:
     """Models and tools the control-plane Studio can wire into a new agent.
 
-    Built once and handed to AgentOS. Studio writes published agents into the
+    Built once and handed to the platform. Studio writes published agents into the
     same Postgres database, and this registry is what rehydrates their model
     and tool references when Open WebUI runs them.
     """
@@ -358,10 +359,10 @@ def _build_registry() -> Any:
 
     model_ids: list[str] = []
     for model_id in (
-        settings.agno_default_model,
-        settings.agno_builder_model,
-        settings.agno_engineer_model,
-        settings.agno_manager_model,
+        settings.oap_default_model,
+        settings.oap_builder_model,
+        settings.oap_engineer_model,
+        settings.oap_manager_model,
     ):
         if model_id and model_id not in model_ids:
             model_ids.append(model_id)
@@ -466,7 +467,7 @@ def describe_agents() -> list[dict[str, str]]:
         return []
     agents = get_all_agents_dict()
     entries = [
-        {"id": TEAM_ID, "name": "Agno Platform Coordinator", "kind": "team"},
+        {"id": TEAM_ID, "name": TEAM_NAME, "kind": "team"},
     ]
     entries.extend(
         {

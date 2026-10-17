@@ -23,7 +23,7 @@ from app.bridge.openwebui_router import (
 from app.bridge.schemas import ChatCompletionRequest, ChatMessage
 
 CATALOG = [
-    {"id": "agno", "name": "Agno Platform Coordinator", "kind": "team"},
+    {"id": "oap", "name": "Platform Coordinator", "kind": "team"},
     {"id": "platform-builder", "name": "Platform Builder", "kind": "agent"},
 ]
 
@@ -83,7 +83,7 @@ class TestAuth:
     def test_protects_every_bridge_route(self, api):
         assert api.get("/v1/files/watcher-status").status_code == 401
         assert api.post("/v1/files/route", json={"filename_query": "a"}).status_code == 401
-        assert api.post("/v1/chat/completions", json={"model": "agno"}).status_code == 401
+        assert api.post("/v1/chat/completions", json={"model": "oap"}).status_code == 401
 
     def test_open_when_no_key_is_configured(self, api, monkeypatch):
         monkeypatch.setattr(security.settings, "os_security_key", "")
@@ -94,13 +94,13 @@ class TestModels:
     def test_lists_the_catalog_in_openai_shape(self, api):
         payload = api.get("/v1/models", headers=AUTH).json()
         assert payload["object"] == "list"
-        assert [m["id"] for m in payload["data"]] == ["agno", "platform-builder"]
+        assert [m["id"] for m in payload["data"]] == ["oap", "platform-builder"]
         assert all(m["object"] == "model" for m in payload["data"])
-        assert all(m["owned_by"] == "agno-agentos" for m in payload["data"])
+        assert all(m["owned_by"] == "oap" for m in payload["data"])
 
     def test_includes_display_names(self, api):
         data = api.get("/v1/models", headers=AUTH).json()["data"]
-        assert data[0]["name"] == "Agno Platform Coordinator"
+        assert data[0]["name"] == "Platform Coordinator"
 
 
 class TestChatCompletions:
@@ -108,7 +108,7 @@ class TestChatCompletions:
         response = api.post(
             "/v1/chat/completions",
             headers=AUTH,
-            json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "oap", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert response.status_code == 200
         body = response.json()
@@ -121,7 +121,7 @@ class TestChatCompletions:
             "/v1/chat/completions",
             headers=AUTH,
             json={
-                "model": "agno",
+                "model": "oap",
                 "user": "tyler",
                 "chat_id": "chat-1",
                 "messages": [{"role": "user", "content": "hi"}],
@@ -136,7 +136,7 @@ class TestChatCompletions:
             "/v1/chat/completions",
             headers=AUTH,
             json={
-                "model": "agno",
+                "model": "oap",
                 "messages": [{"role": "user", "content": "summarise #folder:sops please"}],
             },
         )
@@ -159,7 +159,7 @@ class TestChatCompletions:
             "POST",
             "/v1/chat/completions",
             headers=AUTH,
-            json={"model": "agno", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "oap", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
         ) as response:
             body = "".join(response.iter_text())
         assert body.rstrip().endswith("data: [DONE]")
@@ -183,7 +183,7 @@ class TestFailedRuns:
         response = api.post(
             "/v1/chat/completions",
             headers=AUTH,
-            json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "oap", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert response.status_code == 502
         assert "User not found." in response.json()["detail"]
@@ -204,10 +204,10 @@ class TestFailedRuns:
             "POST",
             "/v1/chat/completions",
             headers=AUTH,
-            json={"model": "agno", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "oap", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
         ) as response:
             body = "".join(response.iter_text())
-        assert "[agentos error] invalid api key" in body
+        assert "[oap error] invalid api key" in body
         assert body.rstrip().endswith("data: [DONE]")
 
     @pytest.mark.parametrize(
@@ -226,7 +226,7 @@ class TestFailedRuns:
         response = api.post(
             "/v1/chat/completions",
             headers=AUTH,
-            json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "oap", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert response.status_code == 200
 
@@ -286,9 +286,9 @@ class TestPromptHelpers:
         assert upload_names([{}, "junk", {"file": {}}]) == []
 
     def test_session_id_falls_back_to_a_stable_synthetic_id(self):
-        request = ChatCompletionRequest(model="agno")
-        assert session_id_for(request, "agno", "tyler") == "owui-agno-tyler"
+        request = ChatCompletionRequest(model="oap")
+        assert session_id_for(request, "oap", "tyler") == "owui-oap-tyler"
 
     def test_session_id_prefers_an_explicit_session(self):
         request = ChatCompletionRequest(session_id="s1", chat_id="c1")
-        assert session_id_for(request, "agno", "tyler") == "s1"
+        assert session_id_for(request, "oap", "tyler") == "s1"

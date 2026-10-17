@@ -274,12 +274,12 @@ def inspect_platform_health() -> dict[str, Any]:
     """Full platform health: database, embeddings, tracing, watcher and agents."""
     return {
         "status": "ok",
-        "agentos_id": settings.agentos_id,
+        "oap_id": settings.oap_id,
         "database": database_status(),
         "llm": {
             "provider": "openrouter",
             "configured": settings.llm_configured,
-            "default_model": settings.agno_default_model,
+            "default_model": settings.oap_default_model,
         },
         "embeddings": {
             "configured": km.embeddings_available(),

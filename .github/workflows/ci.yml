@@ -71,19 +71,19 @@ jobs:
           context: .
           push: false
           load: true
-          tags: agno-agentos-api:ci
+          tags: oap-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Start the API without any provider key and check it degrades cleanly
         run: |
-          docker run -d --name agentos-ci -p 8000:8000 \
+          docker run -d --name oap-ci -p 8000:8000 \
             -e OTEL_ENABLED=false \
             -e ENABLE_FILE_WATCHER=false \
             -e OS_SECURITY_KEY=ci-test-key \
             -e OPENROUTER_API_KEY= \
             -e EMBEDDING_API_KEY= \
-            agno-agentos-api:ci
+            oap-api:ci
           for attempt in $(seq 1 30); do
             if curl -fsS http://localhost:8000/health > /tmp/health.json; then break; fi
             sleep 2
@@ -101,4 +101,4 @@ jobs:
 
       - name: API logs
         if: always()
-        run: docker logs agentos-ci || true
+        run: docker logs oap-ci || true

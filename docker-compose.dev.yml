@@ -2,11 +2,11 @@
 # Never use this file on a shared or internet-facing host.
 
 services:
-  agentos-db:
+  oap-db:
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
 
-  agentos-api:
+  oap-api:
     build:
       target: runtime
     # Bind-mounting the source is what makes --reload useful. Both belong to
@@ -26,7 +26,7 @@ services:
       - --reload-dir
       - /app/app
     ports:
-      - "127.0.0.1:${AGENTOS_PORT:-8000}:8000"
+      - "127.0.0.1:${OAP_PORT:-8000}:8000"
 
   open-webui:
     ports:

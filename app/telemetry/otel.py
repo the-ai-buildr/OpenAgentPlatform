@@ -34,7 +34,7 @@ def init_tracing() -> bool:
         resource = Resource.create(
             {
                 "service.name": settings.otel_service_name,
-                "service.instance.id": settings.agentos_id,
+                "service.instance.id": settings.oap_id,
                 "deployment.environment": settings.otel_environment,
             }
         )
@@ -103,7 +103,7 @@ def instrument_app(app: Any) -> None:
         logger.warning("OpenTelemetry FastAPI instrumentation failed: %s", exc)
 
 
-def get_tracer(name: str = "agno.agentos") -> Any:
+def get_tracer(name: str = "oap") -> Any:
     from opentelemetry import trace
 
     return trace.get_tracer(name)

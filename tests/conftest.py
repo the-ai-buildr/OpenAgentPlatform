@@ -8,10 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # The application reads configuration at import time; pin a deterministic,
 # key-free environment so tests never depend on a developer's .env.
-os.environ.setdefault("OTEL_ENABLED", "false")
-os.environ.setdefault("ENABLE_FILE_WATCHER", "false")
-os.environ.setdefault("OPENROUTER_API_KEY", "")
-os.environ.setdefault("EMBEDDING_API_KEY", "")
+os.environ["OTEL_ENABLED"] = "false"
+os.environ["ENABLE_FILE_WATCHER"] = "false"
+os.environ["OPENROUTER_API_KEY"] = ""
+os.environ["EMBEDDING_API_KEY"] = ""
 
 
 @pytest.fixture()

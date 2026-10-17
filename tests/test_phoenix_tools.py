@@ -45,11 +45,11 @@ def test_project_list_reports_a_connection_failure(monkeypatch):
     monkeypatch.setattr("app.tools.phoenix_tools._get_json", explode)
     monkeypatch.setattr(
         "app.tools.phoenix_tools.settings.otel_exporter_otlp_endpoint",
-        "http://agentos-otel:6006",
+        "http://oap-otel:6006",
     )
 
     result = list_phoenix_projects()
 
     assert result["status"] == "error"
     assert "timed out" in result["error"]
-    assert result["base_url"] == "http://agentos-otel:6006"
+    assert result["base_url"] == "http://oap-otel:6006"

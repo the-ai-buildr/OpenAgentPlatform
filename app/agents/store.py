@@ -29,7 +29,7 @@ REGISTRY_PATH = Path(__file__).with_name("registry.json")
 # Ids owned by the static platform definition in `app.agents.runtime`. Allowing
 # a dynamic agent to take one of these would shadow a core agent at runtime.
 RESERVED_AGENT_IDS = frozenset(
-    {"platform-builder", "platform-engineer", "platform-manager", "platform-telemetry", "agno"}
+    {"platform-builder", "platform-engineer", "platform-manager", "platform-telemetry", "oap"}
 )
 
 _LOCK = threading.RLock()

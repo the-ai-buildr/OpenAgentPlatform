@@ -1,4 +1,4 @@
-"""Typed configuration for the AgentOS runtime.
+"""Typed configuration for the Open Agent Platform runtime.
 
 Every value is sourced from the environment (see `.env.example`). Nothing in
 here reads a file at import time other than the optional local `.env`, so the
@@ -26,11 +26,11 @@ class Settings(BaseSettings):
     # --- LLM (OpenRouter) ---------------------------------------------------
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    agno_default_model: str = "anthropic/claude-sonnet-5.5"
-    agno_builder_model: str = "anthropic/claude-sonnet-5.5"
-    agno_engineer_model: str = "anthropic/claude-sonnet-5.5"
-    agno_manager_model: str = "anthropic/claude-haiku-5.5"
-    agno_model_max_tokens: int = 16384
+    oap_default_model: str = "anthropic/claude-sonnet-5.5"
+    oap_builder_model: str = "anthropic/claude-sonnet-5.5"
+    oap_engineer_model: str = "anthropic/claude-sonnet-5.5"
+    oap_manager_model: str = "anthropic/claude-haiku-5.5"
+    oap_model_max_tokens: int = 16384
 
     # --- Embeddings ---------------------------------------------------------
     # Configured separately from chat. The default host is the OpenAI API.
@@ -40,12 +40,12 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_base_url: str = "https://api.openai.com/v1"
 
-    # --- AgentOS runtime ----------------------------------------------------
-    agentos_id: str = "agno-agentos-platform"
-    agentos_port: int = 8000
+    # --- OAP runtime -------------------------------------------------------
+    oap_id: str = "oap"
+    oap_port: int = 8000
     os_security_key: str = ""
-    agno_telemetry: bool = False
-    agno_debug: bool = False
+    oap_telemetry: bool = False
+    oap_debug: bool = False
     enable_mcp_server: bool = True
 
     # --- File watcher -------------------------------------------------------
@@ -54,16 +54,16 @@ class Settings(BaseSettings):
 
     # --- OpenTelemetry ------------------------------------------------------
     otel_enabled: bool = True
-    otel_service_name: str = "agno-agentos-api"
+    otel_service_name: str = "oap-api"
     otel_environment: str = "development"
     # Base OTLP/HTTP collector URL. The `/v1/traces` suffix is appended by this
     # application, matching the OpenTelemetry specification for
     # OTEL_EXPORTER_OTLP_ENDPOINT.
-    otel_exporter_otlp_endpoint: str = "http://agentos-otel:6006"
+    otel_exporter_otlp_endpoint: str = "http://oap-otel:6006"
     otel_exporter_otlp_headers: str = ""
 
     # --- Database -----------------------------------------------------------
-    database_url: str = "postgresql+psycopg://ai:ai@agentos-db:5432/agentos"
+    database_url: str = "postgresql+psycopg://ai:ai@oap-db:5432/oap"
 
     # --- Bridge -------------------------------------------------------------
     max_staged_upload_bytes: int = 64 * 1024 * 1024
