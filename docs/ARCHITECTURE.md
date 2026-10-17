@@ -139,7 +139,7 @@ Each hypothesis from the brief, confirmed or rejected, with what was done.
 | 22 | Every port published on `0.0.0.0` | Required | Dev ports bind `127.0.0.1`; production publishes only Open WebUI, on loopback, behind a proxy. |
 | 23 | Missing `start_period` on the API healthcheck | Nit | 60 s, so a cold start with model downloads is not reported unhealthy. |
 | 24 | No request validation on `/v1/chat/completions` | Required | Pydantic models in `app/bridge/schemas.py`. |
-| 25 | No tests, no CI | Required | 115 tests plus a GitHub Actions workflow that lints, tests, validates both compose files and boots the image to assert it degrades cleanly without keys. |
+| 25 | No tests, no CI | Required | 148 tests plus a GitHub Actions workflow that lints, tests, validates both compose files and boots the image to assert it degrades cleanly without keys. |
 | 26 | A missing API key crashed the app at import | Required | Without `OPENROUTER_API_KEY` the app serves a degraded FastAPI app: `/health` explains why, `/v1/models` still answers, and the container stays healthy instead of crash-looping. |
 | 27 | `make clean` silently ran `down -v` | Required | Renamed `destroy-volumes`, spells out what is lost, requires typing `destroy`, and explicitly says it is **not** the fix for a password error. |
 

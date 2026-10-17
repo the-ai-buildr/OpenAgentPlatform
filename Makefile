@@ -150,12 +150,12 @@ test-watch: ## Re-run tests on change (needs pytest-watcher or entr)
 	@find app tests -name '*.py' | entr -c $(MAKE) test
 
 lint: ## Lint with ruff
-	@if [ -x "$(VENV)/bin/ruff" ]; then $(VENV)/bin/ruff check app tests && $(VENV)/bin/ruff format --check app tests; \
-	else ruff check app tests && ruff format --check app tests; fi
+	@if [ -x "$(VENV)/bin/ruff" ]; then $(VENV)/bin/ruff check app tests scripts && $(VENV)/bin/ruff format --check app tests scripts; \
+	else ruff check app tests scripts && ruff format --check app tests scripts; fi
 
 format: ## Auto-format with ruff
-	@if [ -x "$(VENV)/bin/ruff" ]; then $(VENV)/bin/ruff check --fix app tests && $(VENV)/bin/ruff format app tests; \
-	else ruff check --fix app tests && ruff format app tests; fi
+	@if [ -x "$(VENV)/bin/ruff" ]; then $(VENV)/bin/ruff check --fix app tests scripts && $(VENV)/bin/ruff format app tests scripts; \
+	else ruff check --fix app tests scripts && ruff format app tests scripts; fi
 
 typecheck: ## Byte-compile every module as a cheap import/syntax check
 	@$(PY) -m compileall -q app tests && echo "compileall: ok"
