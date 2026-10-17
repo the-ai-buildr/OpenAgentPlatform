@@ -1,0 +1,6 @@
+{
+  "name": "Example Analyst",
+  "role": "Shows the shape of a catalog agent. This file is not registered.",
+  "instructions": "Answer with the sources you used.",
+  "enable_web_search": true
+}

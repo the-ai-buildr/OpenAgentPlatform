@@ -29,7 +29,7 @@ REGISTRY_PATH = Path(__file__).with_name("registry.json")
 # Ids owned by the static platform definition in `app.agents.runtime`. Allowing
 # a dynamic agent to take one of these would shadow a core agent at runtime.
 RESERVED_AGENT_IDS = frozenset(
-    {"platform-builder", "platform-engineer", "platform-manager", "agno"}
+    {"platform-builder", "platform-engineer", "platform-manager", "platform-telemetry", "agno"}
 )
 
 _LOCK = threading.RLock()
@@ -153,6 +153,51 @@ def upsert_spec(spec: AgentSpec) -> AgentSpec:
     save_specs(specs)
     _notify()
     return spec
+
+
+def sync_catalog_agents(specs: Iterable[AgentSpec], *, notify: bool = True) -> bool:
+    """Replace catalog-sourced agents with `specs`.
+
+    Agents created from the builder stay in the registry. Catalog files are the
+    source of truth for agents marked ``source=catalog``. Returns True when the
+    file changed. `notify` is False during startup, before the runtime exists.
+    """
+    incoming: dict[str, AgentSpec] = {}
+    for spec in specs:
+        if spec.agent_id in RESERVED_AGENT_IDS or not spec.agent_id.strip():
+            raise RegistryError(f"'{spec.agent_id}' cannot be loaded from the catalog")
+        if not spec.knowledge_folder:
+            spec.knowledge_folder = normalise_folder(f"agents/{spec.agent_id}")
+        else:
+            spec.knowledge_folder = normalise_folder(spec.knowledge_folder)
+        spec.extra = {**spec.extra, "source": "catalog"}
+        incoming[spec.agent_id] = spec
+
+    current = load_specs()
+    kept: list[AgentSpec] = []
+    changed = False
+    seen: set[str] = set()
+    for existing in current:
+        if existing.extra.get("source") != "catalog":
+            kept.append(existing)
+            continue
+        replacement = incoming.get(existing.agent_id)
+        if replacement is None:
+            changed = True
+            continue
+        if replacement.to_dict() != existing.to_dict():
+            changed = True
+        kept.append(replacement)
+        seen.add(existing.agent_id)
+    for agent_id, spec in incoming.items():
+        if agent_id not in seen:
+            kept.append(spec)
+            changed = True
+    if changed:
+        save_specs(kept)
+        if notify:
+            _notify()
+    return changed
 
 
 def delete_spec(agent_id: str) -> bool:

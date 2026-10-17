@@ -1,0 +1,5 @@
+{
+  "name": "Example Desk",
+  "instructions": "Send the question to the member who can answer it.",
+  "members": ["platform-manager"]
+}

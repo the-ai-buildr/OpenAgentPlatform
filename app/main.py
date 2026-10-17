@@ -29,10 +29,13 @@ logger = logging.getLogger("agentos")
 init_tracing()
 
 from agno.os import AgentOS  # noqa: E402
+from agno.os.settings import AgnoAPISettings  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
 from app.agents import runtime  # noqa: E402
 from app.bridge.openwebui_router import router as openwebui_router  # noqa: E402
+from app.catalog_loader import start_watcher, stop_watcher  # noqa: E402
+from app.control_plane import enable_private_network_cors  # noqa: E402
 from app.knowledge import knowledge_manager as km  # noqa: E402
 from app.knowledge.file_watcher import watcher_service  # noqa: E402
 from app.tools.platform_tools import database_status  # noqa: E402
@@ -49,8 +52,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("File watcher disabled via ENABLE_FILE_WATCHER")
     try:
+        start_watcher(runtime.reload_dynamic_agents)
+    except Exception as exc:  # pragma: no cover - depends on host filesystem
+        logger.warning("Catalog watcher could not start: %s", exc)
+    try:
         yield
     finally:
+        stop_watcher()
         watcher_service.stop()
 
 
@@ -108,17 +116,24 @@ def _build_agent_os() -> tuple[AgentOS, FastAPI]:
     runtime.initialize()
     agent_os = AgentOS(
         id=settings.agentos_id,
+        name="Open Agent Platform",
+        description="Local AgentOS. Connect os.agno.com to http://localhost:8000.",
         agents=runtime.get_all_agents_list(),
-        teams=[runtime.get_team()],
+        teams=[runtime.get_team(), *runtime.get_catalog_teams()],
+        workflows=runtime.get_catalog_workflows(),
         knowledge=km.get_all_knowledge_list(),
         db=runtime.get_db(),
+        registry=runtime.get_registry(),
+        settings=AgnoAPISettings(os_security_key=settings.os_security_key.strip() or None),
         mcp=settings.enable_mcp_server,
         telemetry=settings.agno_telemetry,
         lifespan=lifespan,
         base_app=base_app,
         on_route_conflict="preserve_base_app",
     )
-    return agent_os, agent_os.get_app()
+    app = agent_os.get_app()
+    enable_private_network_cors(app)
+    return agent_os, app
 
 
 _agent_os: AgentOS | None = None
@@ -131,6 +146,8 @@ if settings.llm_configured:
         """Re-register dynamically created agents with the running AgentOS."""
         try:
             _running_os.agents = runtime.get_all_agents_list()
+            _running_os.teams = [runtime.get_team(), *runtime.get_catalog_teams()]
+            _running_os.workflows = runtime.get_catalog_workflows()
             _running_os.resync(app)
             logger.info("AgentOS resynced with %d agents", len(_running_os.agents or []))
         except Exception as exc:  # pragma: no cover - defensive

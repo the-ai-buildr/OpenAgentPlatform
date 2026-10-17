@@ -1,0 +1,5 @@
+{
+  "name": "Example Brief",
+  "description": "Ask one agent to produce a short brief.",
+  "agent_id": "platform-manager"
+}

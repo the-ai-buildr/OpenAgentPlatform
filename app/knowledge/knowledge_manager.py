@@ -58,9 +58,9 @@ def _get_content_db() -> Any:
 def build_embedder() -> Any:
     """Embedder for every knowledge base.
 
-    Note the base URL defaults to the OpenAI API rather than OpenRouter:
-    OpenRouter's catalogue contains no embedding models and it exposes no
-    `/embeddings` route, so routing embeddings through it always fails.
+    The base URL defaults to the OpenAI API. OpenRouter also serves
+    `/embeddings`; set `EMBEDDING_BASE_URL` to it and use an OpenRouter model
+    id such as `openai/text-embedding-3-small`.
     """
     from agno.knowledge.embedder.openai import OpenAIEmbedder
 

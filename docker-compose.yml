@@ -35,6 +35,10 @@ services:
       - "127.0.0.1:${OTEL_UI_PORT:-6006}:6006"
     environment:
       PHOENIX_WORKING_DIR: /mnt/data
+      # Phoenix's assistant and playground speak OpenAI. Point them at the
+      # same OpenRouter key and base URL the agents use.
+      OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
     volumes:
       - otel_data:/mnt/data
 
@@ -44,6 +48,12 @@ services:
       dockerfile: Dockerfile
     image: agno-agentos-api:local
     container_name: agentos-api
+    # Open WebUI is configured with http://oap-api:8000/v1. The service name
+    # stays agentos-api; this alias is the name that connection dials.
+    networks:
+      default:
+        aliases:
+          - oap-api
     restart: unless-stopped
     env_file: [.env]
     environment:
@@ -74,9 +84,13 @@ services:
       ENABLE_OPENAI_API: "true"
       OPENAI_API_BASE_URLS: ${OPENAI_API_BASE_URLS:-http://agentos-api:8000/v1}
       OPENAI_API_KEYS: ${OS_SECURITY_KEY:?OS_SECURITY_KEY must be set in .env}
+      # Applied on a fresh WebUI database. An existing database keeps the
+      # connection it already saved; the oap-api alias above is what makes
+      # that saved URL resolve.
+      OPENAI_API_CONFIGS: '{"0":{"enable":true,"tags":["AgentOS"],"prefix_id":"","model_ids":[],"connection_type":"external"}}'
       DEFAULT_MODELS: ${DEFAULT_MODELS:-agno}
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set in .env}
-      WEBUI_NAME: ${WEBUI_NAME:-Agno AgentOS Control Center}
+      WEBUI_NAME: ${WEBUI_NAME:-Open Agent Platform}
       TASK_MODEL_EXTERNAL: ${TASK_MODEL_EXTERNAL:-platform-manager}
     volumes:
       - openwebui_data:/app/backend/data

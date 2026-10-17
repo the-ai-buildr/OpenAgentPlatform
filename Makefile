@@ -23,7 +23,8 @@ AUTH_HEADER   := Authorization: Bearer $(OS_SECURITY_KEY)
 .PHONY: help setup env venv up dev down restart build rebuild ps status health models \
         watcher-status logs logs-api logs-db logs-otel logs-webui test test-watch lint \
         format typecheck db-shell db-dump db-restore kb-list files-tree urls \
-        prod-config prod-up prod-down prod-logs config destroy-volumes
+        prod-config prod-up prod-down prod-logs config destroy-volumes \
+        agentos phoenix-mcp
 
 # --------------------------------------------------------------------------- #
 help: ## Show this help
@@ -31,10 +32,10 @@ help: ## Show this help
 	@echo "  $(PROJECT_NAME) - Agno AgentOS + Open WebUI"
 	@echo ""
 	@echo "  Setup"
-	@grep -hE '^(setup|env|venv|build|rebuild):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^(setup|env|venv|build|rebuild|phoenix-mcp):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  Run (local development)"
-	@grep -hE '^(up|dev|down|restart|ps|urls):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^(up|dev|agentos|down|restart|ps|urls):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  Inspect"
 	@grep -hE '^(status|health|models|watcher-status|logs|logs-api|logs-db|logs-otel|logs-webui|files-tree|kb-list|config):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -94,6 +95,23 @@ restart: ## Restart every service
 
 ps: ## Show container status
 	$(DEV_COMPOSE) ps
+
+agentos: env ## Start AgentOS with its default agents, Postgres and Phoenix (no Open WebUI)
+	$(DEV_COMPOSE) up -d --build agentos-db agentos-otel agentos-api
+	@echo ""
+	@echo "  AgentOS only. Default agents: platform-builder, platform-engineer,"
+	@echo "  platform-manager, platform-telemetry, and the agno coordinator."
+	@echo "  Control plane: https://os.agno.com  -> Local -> $(AGENTOS_URL)"
+	@echo "  Security key is OS_SECURITY_KEY in .env."
+	@$(MAKE) --no-print-directory urls
+
+phoenix-mcp: ## Register Phoenix MCP at $(PHOENIX_URL)/mcp (AGENT=cursor|claude|codex|gemini|opencode|vscode)
+	@agent="$(or $(AGENT),cursor)"; \
+	case "$$agent" in \
+		claude|codex|gemini|cursor|opencode|vscode) ;; \
+		*) echo "AGENT must be one of: claude codex gemini cursor opencode vscode"; exit 1 ;; \
+	esac; \
+	npx -y @arizeai/phoenix-cli setup mcp --agent "$$agent" --endpoint "$(PHOENIX_URL)" --no-input
 
 urls: ## Print the local service URLs
 	@echo ""

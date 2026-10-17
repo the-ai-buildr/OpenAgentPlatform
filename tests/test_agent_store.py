@@ -49,7 +49,14 @@ class TestUpsert:
         assert get_spec("research").knowledge_folder == "contracts/acme-corp"
 
     @pytest.mark.parametrize(
-        "reserved", ["platform-builder", "platform-engineer", "platform-manager", "agno"]
+        "reserved",
+        [
+            "platform-builder",
+            "platform-engineer",
+            "platform-manager",
+            "platform-telemetry",
+            "agno",
+        ],
     )
     def test_rejects_reserved_ids(self, registry_file, reserved):
         with pytest.raises(RegistryError):

@@ -26,15 +26,15 @@ class Settings(BaseSettings):
     # --- LLM (OpenRouter) ---------------------------------------------------
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    agno_default_model: str = "anthropic/claude-sonnet-4.5"
-    agno_builder_model: str = "anthropic/claude-sonnet-4.5"
-    agno_engineer_model: str = "anthropic/claude-sonnet-4.5"
-    agno_manager_model: str = "openai/gpt-4o-mini"
-    agno_model_max_tokens: int = 4096
+    agno_default_model: str = "anthropic/claude-sonnet-5.5"
+    agno_builder_model: str = "anthropic/claude-sonnet-5.5"
+    agno_engineer_model: str = "anthropic/claude-sonnet-5.5"
+    agno_manager_model: str = "anthropic/claude-haiku-5.5"
+    agno_model_max_tokens: int = 16384
 
     # --- Embeddings ---------------------------------------------------------
-    # OpenRouter serves no embedding models, so embeddings are configured
-    # independently and default to the OpenAI API.
+    # Configured separately from chat. The default host is the OpenAI API.
+    # Point EMBEDDING_BASE_URL at OpenRouter to reuse OPENROUTER_API_KEY.
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
     embedding_api_key: str = ""
@@ -85,12 +85,10 @@ class Settings(BaseSettings):
 
     @property
     def effective_embedding_api_key(self) -> str:
-        """Embedding key, falling back to OpenRouter only for OpenRouter-hosted URLs.
+        """Embedding key, falling back to OpenRouter only for OpenRouter URLs.
 
-        OpenRouter does not expose an embeddings endpoint, so silently reusing
-        the OpenRouter key against `api.openai.com` would send the wrong
-        credential. The fallback therefore only applies when the embedding base
-        URL really is OpenRouter (i.e. someone is proxying).
+        An OpenRouter key is not valid at api.openai.com, so the fallback
+        applies only when the embedding base URL is actually OpenRouter.
         """
         if self.embedding_api_key.strip():
             return self.embedding_api_key.strip()

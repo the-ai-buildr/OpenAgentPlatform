@@ -16,10 +16,10 @@ Open WebUI  →  AgentOS /v1 bridge  →  Agno agents + team  →  OpenRouter (c
 
 | | |
 |---|---|
-| **Agents** | `platform-builder` (creates agents and folders), `platform-engineer` (explains the codebase), `platform-manager` (health, routing, indexing) |
+| **Agents** | `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, plus anything in `app/catalog/` |
 | **Team** | `agno` — routes a request to the right specialist |
 | **Chat models** | Any model on [OpenRouter](https://openrouter.ai/models) |
-| **Embeddings** | OpenAI or any OpenAI-compatible embeddings server (**not** OpenRouter — see [Why two providers](#why-two-providers)) |
+| **Embeddings** | OpenRouter or any OpenAI-compatible embeddings server — see [Chat and embeddings](#chat-and-embeddings) |
 | **Storage** | PostgreSQL 17 + pgvector 0.8.7 |
 | **Tracing** | OpenTelemetry → Arize Phoenix |
 
@@ -32,7 +32,8 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Getting an OpenRouter key](#getting-an-openrouter-key)
-- [Why two providers](#why-two-providers)
+- [Chat and embeddings](#chat-and-embeddings)
+- [AgentOS control plane](#agentos-control-plane)
 - [Local development](#local-development)
 - [Running the tests](#running-the-tests)
 - [Connecting Open WebUI](#connecting-open-webui)
@@ -58,8 +59,7 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 | Python | 3.12+ | Only for running the tests on the host |
 | RAM | 4 GB free | Postgres + Phoenix + Open WebUI + API |
 | Disk | 6 GB free | Images are ~4 GB together |
-| An OpenRouter key | — | [Getting an OpenRouter key](#getting-an-openrouter-key) |
-| An OpenAI key | — | Optional. Needed only for document knowledge |
+| An OpenRouter key | — | [Getting an OpenRouter key](#getting-an-openrouter-key). Also used for embeddings when you point them at OpenRouter |
 
 ---
 
@@ -76,7 +76,10 @@ Open `.env` and set at least:
 
 ```ini
 OPENROUTER_API_KEY=sk-or-v1-...   # required for agents to answer
-EMBEDDING_API_KEY=sk-proj-...     # optional; required for document knowledge
+# Optional. Leave empty and point the base URL at OpenRouter to reuse the key above.
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=openai/text-embedding-3-small
 ```
 
 Then:
@@ -136,23 +139,27 @@ To check an id is live:
 curl -s https://openrouter.ai/api/v1/models | grep -o '"id":"anthropic/claude-sonnet-4.5"'
 ```
 
-### Why two providers
+### Chat and embeddings
 
-**OpenRouter serves chat models only.** Its catalogue contains no embedding
-models and it exposes no `/embeddings` endpoint, so embeddings must come from
-somewhere else. `.env` therefore has a separate block:
+Chat and embeddings are separate settings so you can point them at different
+hosts. OpenRouter serves both. `POST /v1/embeddings` accepts ids such as
+`openai/text-embedding-3-small`. Leave `EMBEDDING_API_KEY` empty and set the
+base URL to OpenRouter; the app reuses `OPENROUTER_API_KEY`. It does **not**
+reuse that key against `https://api.openai.com/v1`.
 
 ```ini
-EMBEDDING_API_KEY=sk-proj-...               # an OpenAI key, or any compatible server
-EMBEDDING_BASE_URL=https://api.openai.com/v1
-EMBEDDING_MODEL=text-embedding-3-small      # OpenAI-native id, no "openai/" prefix
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=openai/text-embedding-3-small   # OpenRouter id, with the provider prefix
 EMBEDDING_DIMENSIONS=1536
 ```
 
-Any OpenAI-compatible embeddings server works — a local
+Any OpenAI-compatible embeddings server also works — the OpenAI API, a local
 [text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference)
-or an Ollama proxy, for example. Point `EMBEDDING_BASE_URL` at it and set
-`EMBEDDING_DIMENSIONS` to that model's output size.
+server, or an Ollama proxy. Point `EMBEDDING_BASE_URL` at it, set
+`EMBEDDING_API_KEY` if that host needs one, and set `EMBEDDING_DIMENSIONS` to
+that model's output size. A bare OpenAI id (`text-embedding-3-small`) is for
+`api.openai.com`, not for OpenRouter.
 
 > **Changing the embedding model invalidates existing vectors.** The dimension
 > is baked into each `kb_*` table. After a change, drop the tables and re-index
@@ -167,8 +174,9 @@ Leave `EMBEDDING_API_KEY` empty and the stack still runs: uploads are stored in
 
 ```bash
 make help            # every target, grouped
-make up              # start in the background (dev overlay: bind mount + reload)
-make dev             # same, in the foreground with logs attached
+make up              # start the full stack in the background
+make agentos         # AgentOS, Postgres and Phoenix only — no Open WebUI
+make dev             # full stack in the foreground with logs attached
 make logs-api        # tail one service
 make restart
 make down            # stop; data is kept
@@ -329,9 +337,69 @@ indexed, and the response says so.
 
 ---
 
+## AgentOS control plane
+
+[os.agno.com](https://os.agno.com) connects from your browser to the local API.
+
+```text
+Endpoint:     http://localhost:8000
+Security key: OS_SECURITY_KEY from .env
+```
+
+`make agentos` starts that API with Postgres and Phoenix and without Open
+WebUI. Chrome asks `os.agno.com` for local-network permission; allow it. The
+API answers that preflight with `Access-Control-Allow-Private-Network: true`.
+
+The same screen lists the default agents, catalog teams and catalog workflows.
+
+---
+
 ## Creating your own agents
 
-Ask the Builder in chat:
+The folder is the assignment. A file in `app/catalog/agents/` becomes a model
+in Open WebUI, and its default knowledge folder is
+`workspace_files/agents/<id>/`. Files dropped there, and files attached while
+chatting with that model, stay with that agent. Files whose names start with
+`_` are examples and are not registered.
+
+`app/catalog/agents/research.json`:
+
+```json
+{
+  "name": "Research Analyst",
+  "role": "Summarises research",
+  "instructions": "Cite the source for every claim.",
+  "enable_web_search": true
+}
+```
+
+Saving the file registers `research`. Refresh the Open WebUI model picker.
+The same layout covers teams and workflows:
+
+`app/catalog/teams/desk.json`:
+
+```json
+{
+  "name": "Research Desk",
+  "members": ["research", "platform-manager"],
+  "instructions": "Delegate."
+}
+```
+
+`app/catalog/workflows/brief.json`:
+
+```json
+{
+  "name": "Brief",
+  "agent_id": "research",
+  "description": "Ask research for a short brief."
+}
+```
+
+A team is skipped until every member id exists. A workflow runs its
+`agent_id` as one step.
+
+You can still ask the Builder in chat:
 
 > Create an agent called `research` named "Research Analyst". It should
 > summarise market research, use the `research` knowledge folder, and have web
@@ -360,8 +428,8 @@ The registry is a plain file you can edit and commit:
 }
 ```
 
-`platform-builder`, `platform-engineer`, `platform-manager` and `agno` are
-reserved and cannot be overwritten.
+`platform-builder`, `platform-engineer`, `platform-manager`,
+`platform-telemetry` and `agno` are reserved and cannot be overwritten.
 
 ---
 
@@ -374,6 +442,22 @@ Phoenix container.
 open http://localhost:6006
 make logs-otel
 ```
+
+Compose copies `OPENROUTER_API_KEY` and `OPENROUTER_BASE_URL` onto the Phoenix
+container as `OPENAI_API_KEY` and `OPENAI_BASE_URL`, so Phoenix's own assistant
+uses the same provider. In the Phoenix UI pick the OpenAI provider and an
+OpenRouter model id.
+
+`platform-telemetry` reads that same store: projects, recent traces and recent
+spans. Ask it what the last chat turn did.
+
+Register Phoenix's MCP server (`http://localhost:6006/mcp`) with a coding agent:
+
+```bash
+make phoenix-mcp AGENT=cursor
+```
+
+`AGENT` can be `claude`, `codex`, `gemini`, `cursor`, `opencode` or `vscode`.
 
 In Phoenix, look at **Traces** and filter by service `agno-agentos-api`. A
 chat turn looks like: FastAPI request → `openwebui.chat_stream` → the Agno
@@ -555,8 +639,9 @@ Every variable is documented inline in
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | Required. Without it the API runs degraded. |
 | `AGNO_DEFAULT_MODEL` | `anthropic/claude-sonnet-4.5` | Must exist in the OpenRouter catalogue |
-| `EMBEDDING_API_KEY` | — | Optional. Without it nothing is indexed. |
-| `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | Not OpenRouter |
+| `EMBEDDING_API_KEY` | — | Optional. Empty reuses `OPENROUTER_API_KEY` only when the base URL is OpenRouter. |
+| `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | Set to `https://openrouter.ai/api/v1` to embed through OpenRouter |
+| `WEBUI_NAME` | `Open Agent Platform` | Open WebUI appends ` (Open WebUI)` in the sidebar |
 | `EMBEDDING_DIMENSIONS` | `1536` | Must match the model |
 | `OS_SECURITY_KEY` | generated | Bearer token for the API, `/v1` and `/mcp` |
 | `ENABLE_FILE_WATCHER` | `true` | Auto-index `workspace_files/` |
@@ -685,6 +770,9 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 ├── app/
 │   ├── settings.py              Typed configuration from the environment
 │   ├── main.py                  Entrypoint: tracing, AgentOS, lifespan, /health
+│   ├── control_plane.py         Allows os.agno.com to call localhost
+│   ├── catalog_loader.py        Loads app/catalog into the registry and WebUI
+│   ├── catalog/                 agents/, teams/, workflows/ JSON definitions
 │   ├── telemetry/otel.py        Tracer provider and library instrumentation
 │   ├── knowledge/
 │   │   ├── paths.py             Path containment and table naming (pure)
@@ -692,9 +780,11 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 │   │   └── file_watcher.py      Debounced auto-indexer
 │   ├── agents/
 │   │   ├── store.py             registry.json CRUD and folder rules (pure)
-│   │   ├── runtime.py           Builds the Agno agents and the team
-│   │   └── registry.json        Your custom agents
-│   ├── tools/platform_tools.py  The tools the agents call
+│   │   ├── runtime.py           Builds agents, the coordinator, catalog teams and workflows
+│   │   └── registry.json        Custom agents, including ones synced from the catalog
+│   ├── tools/
+│   │   ├── platform_tools.py    Tools the platform agents call
+│   │   └── phoenix_tools.py     Read-only Phoenix project, trace and span queries
 │   └── bridge/
 │       ├── security.py          Bearer auth for /v1
 │       ├── schemas.py           Request/response models

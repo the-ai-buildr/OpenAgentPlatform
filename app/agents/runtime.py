@@ -12,21 +12,31 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from app import catalog_loader
 from app.agents import store
 from app.knowledge import knowledge_manager as km
 from app.settings import settings
+from app.tools import phoenix_tools
 from app.tools import platform_tools as tools
 
 logger = logging.getLogger(__name__)
 
-CORE_AGENT_IDS = ("platform-builder", "platform-engineer", "platform-manager")
+CORE_AGENT_IDS = (
+    "platform-builder",
+    "platform-engineer",
+    "platform-manager",
+    "platform-telemetry",
+)
 TEAM_ID = "agno"
 
 _lock = threading.RLock()
 _core_agents: dict[str, Any] = {}
 _dynamic_agents: dict[str, Any] = {}
 _team: Any = None
+_catalog_teams: dict[str, Any] = {}
+_catalog_workflows: dict[str, Any] = {}
 _db: Any = None
+_registry: Any = None
 _on_change: list[Callable[[], None]] = []
 
 
@@ -131,7 +141,28 @@ def _build_core_agents() -> dict[str, Any]:
         **common,
     )
 
-    return {agent.id: agent for agent in (builder, engineer, manager)}
+    telemetry = Agent(
+        id="platform-telemetry",
+        name="Platform Telemetry",
+        role="Reads Phoenix traces and spans exported by this AgentOS",
+        model=build_model(settings.agno_manager_model),
+        tools=[
+            phoenix_tools.list_phoenix_projects,
+            phoenix_tools.list_recent_traces,
+            phoenix_tools.list_recent_spans,
+            tools.inspect_platform_health,
+        ],
+        instructions=[
+            "You explain what the running platform actually did, using Phoenix traces.",
+            "List projects before querying traces or spans. The default project is named default.",
+            "Quote span names, status codes and trace ids from the tool results.",
+            "Do not invent spans, latencies or errors that the tools did not return.",
+            "If Phoenix is unreachable, say so and include the error from the tool.",
+        ],
+        **common,
+    )
+
+    return {agent.id: agent for agent in (builder, engineer, manager, telemetry)}
 
 
 def _build_dynamic_agents() -> dict[str, Any]:
@@ -183,6 +214,7 @@ def _build_team(members: list[Any]) -> Any:
             "Agent and folder creation goes to Platform Builder.",
             "Questions about the codebase go to Platform Engineer.",
             "Health, routing and indexing go to Platform Manager.",
+            "Traces, spans, latency and errors go to Platform Telemetry.",
             "Answer directly only when no member is a better fit.",
         ],
         add_history_to_context=True,
@@ -191,25 +223,80 @@ def _build_team(members: list[Any]) -> Any:
     )
 
 
+def _build_catalog_teams(agents: dict[str, Any]) -> dict[str, Any]:
+    from agno.team import Team
+
+    teams: dict[str, Any] = {}
+    for spec in catalog_loader.team_files():
+        missing = [member for member in spec.members if member not in agents]
+        if missing or not spec.members:
+            logger.warning("Catalog team %s skipped; missing members %s", spec.team_id, missing)
+            continue
+        teams[spec.team_id] = Team(
+            id=spec.team_id,
+            name=spec.name,
+            members=[agents[member] for member in spec.members],
+            model=build_model(settings.agno_manager_model),
+            db=get_db(),
+            instructions=[spec.instructions] if spec.instructions else None,
+            markdown=True,
+        )
+    return teams
+
+
+def _build_catalog_workflows(agents: dict[str, Any]) -> dict[str, Any]:
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import Workflow
+
+    workflows: dict[str, Any] = {}
+    for spec in catalog_loader.workflow_files():
+        agent = agents.get(spec.agent_id)
+        if agent is None:
+            logger.warning(
+                "Catalog workflow %s skipped; agent %s is not loaded",
+                spec.workflow_id,
+                spec.agent_id,
+            )
+            continue
+        workflows[spec.workflow_id] = Workflow(
+            id=spec.workflow_id,
+            name=spec.name,
+            description=spec.description or None,
+            steps=[Step(name=spec.name, agent=agent)],
+            db=get_db(),
+        )
+    return workflows
+
+
+def _install_catalog(agents: dict[str, Any]) -> None:
+    global _catalog_teams, _catalog_workflows
+    _catalog_teams = _build_catalog_teams(agents)
+    _catalog_workflows = _build_catalog_workflows(agents)
+
+
 def initialize() -> None:
     """Build core agents, the team and all registered custom agents."""
     global _team
+    catalog_loader.refresh(notify=False)
     with _lock:
         _core_agents.clear()
         _core_agents.update(_build_core_agents())
         _dynamic_agents.clear()
         _dynamic_agents.update(_build_dynamic_agents())
+        _install_catalog({**_core_agents, **_dynamic_agents})
         _team = _build_team(list(_core_agents.values()))
 
 
 def reload_dynamic_agents() -> dict[str, Any]:
     """Rebuild custom agents from the registry and notify AgentOS."""
+    catalog_loader.refresh(notify=False)
     with _lock:
         if not _core_agents:
             initialize()
         else:
             _dynamic_agents.clear()
             _dynamic_agents.update(_build_dynamic_agents())
+            _install_catalog({**_core_agents, **_dynamic_agents})
     for callback in list(_on_change):
         try:
             callback()
@@ -222,6 +309,18 @@ def on_agents_changed(callback: Callable[[], None]) -> None:
     """Register a listener fired after the agent set is rebuilt (AgentOS resync)."""
     if callback not in _on_change:
         _on_change.append(callback)
+
+
+def get_catalog_teams() -> list[Any]:
+    if not _core_agents and settings.llm_configured:
+        initialize()
+    return list(_catalog_teams.values())
+
+
+def get_catalog_workflows() -> list[Any]:
+    if not _core_agents and settings.llm_configured:
+        initialize()
+    return list(_catalog_workflows.values())
 
 
 def get_team() -> Any:
@@ -240,6 +339,100 @@ def get_all_agents_list() -> list[Any]:
     return list(get_all_agents_dict().values())
 
 
+def get_registry() -> Any:
+    """Models and tools the control-plane Studio can wire into a new agent.
+
+    Built once and handed to AgentOS. Studio writes published agents into the
+    same Postgres database, and this registry is what rehydrates their model
+    and tool references when Open WebUI runs them.
+    """
+    global _registry
+    if _registry is None:
+        _registry = _build_registry()
+    return _registry
+
+
+def _build_registry() -> Any:
+    from agno.registry import Registry
+    from agno.tools.calculator import CalculatorTools
+
+    model_ids: list[str] = []
+    for model_id in (
+        settings.agno_default_model,
+        settings.agno_builder_model,
+        settings.agno_engineer_model,
+        settings.agno_manager_model,
+    ):
+        if model_id and model_id not in model_ids:
+            model_ids.append(model_id)
+
+    models = []
+    for model_id in model_ids:
+        model = build_model(model_id)
+        model.name = model_id
+        models.append(model)
+
+    tools: list[Any] = [CalculatorTools()]
+    try:
+        from agno.tools.duckduckgo import DuckDuckGoTools
+
+        tools.append(DuckDuckGoTools())
+    except Exception as exc:  # pragma: no cover - optional toolkit
+        logger.warning("Web search tool not registered for Studio: %s", exc)
+
+    return Registry(
+        name="Open Agent Platform",
+        description="Models and tools available in the local control plane.",
+        models=models,
+        tools=tools,
+        dbs=[get_db()],
+    )
+
+
+def list_published_studio_agents(exclude: set[str]) -> list[dict[str, str]]:
+    """Agents published from the control plane, excluding ones defined in code."""
+    from agno.db.base import ComponentType
+
+    try:
+        rows, _total = get_db().list_components(component_type=ComponentType.AGENT, limit=200)
+    except Exception as exc:
+        logger.warning("Studio catalogue unavailable: %s", exc)
+        return []
+
+    published: list[dict[str, str]] = []
+    for row in rows:
+        agent_id = str(row.get("component_id") or "")
+        if not agent_id or agent_id in exclude or row.get("current_version") is None:
+            continue
+        published.append(
+            {
+                "id": agent_id,
+                "name": str(row.get("name") or agent_id),
+                "kind": "studio",
+            }
+        )
+    return published
+
+
+def load_published_studio_agent(agent_id: str) -> Any | None:
+    """Rehydrate one published Studio agent so the bridge can run it."""
+    from agno.os.utils import get_agent_by_id
+
+    try:
+        return get_agent_by_id(
+            agent_id=agent_id,
+            agents=get_all_agents_list(),
+            db=get_db(),
+            registry=get_registry(),
+            create_fresh=True,
+            published_only=True,
+            strict=False,
+        )
+    except Exception as exc:
+        logger.warning("Studio agent %s unavailable: %s", agent_id, exc)
+        return None
+
+
 def get_runner(model_id: str | None) -> Any:
     """Resolve an Open WebUI model id to a team or agent, defaulting to the team.
 
@@ -251,7 +444,16 @@ def get_runner(model_id: str | None) -> Any:
     if not model_id or model_id == TEAM_ID:
         return get_team()
     agents = get_all_agents_dict()
-    return agents.get(model_id) or get_team()
+    if model_id in agents:
+        return agents[model_id]
+    if model_id in _catalog_teams:
+        return _catalog_teams[model_id]
+    if model_id in _catalog_workflows:
+        return _catalog_workflows[model_id]
+    studio = load_published_studio_agent(model_id)
+    if studio is not None:
+        return studio
+    return get_team()
 
 
 def describe_agents() -> list[dict[str, str]]:
@@ -262,6 +464,7 @@ def describe_agents() -> list[dict[str, str]]:
     """
     if not settings.llm_configured:
         return []
+    agents = get_all_agents_dict()
     entries = [
         {"id": TEAM_ID, "name": "Agno Platform Coordinator", "kind": "team"},
     ]
@@ -271,8 +474,25 @@ def describe_agents() -> list[dict[str, str]]:
             "name": getattr(agent, "name", agent_id) or agent_id,
             "kind": "agent",
         }
-        for agent_id, agent in get_all_agents_dict().items()
+        for agent_id, agent in agents.items()
     )
+    entries.extend(
+        {
+            "id": team_id,
+            "name": getattr(team, "name", team_id) or team_id,
+            "kind": "team",
+        }
+        for team_id, team in _catalog_teams.items()
+    )
+    entries.extend(
+        {
+            "id": workflow_id,
+            "name": getattr(workflow, "name", workflow_id) or workflow_id,
+            "kind": "workflow",
+        }
+        for workflow_id, workflow in _catalog_workflows.items()
+    )
+    entries.extend(list_published_studio_agents({entry["id"] for entry in entries}))
     return entries
 
 

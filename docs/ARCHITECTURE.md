@@ -42,8 +42,11 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │   │  agents: platform-builder            │   │
                            │   │          platform-engineer           │   │
                            │   │          platform-manager            │   │
-                           │   │          + registry.json agents      │   │
+                           │   │          platform-telemetry          │   │
+                           │   │          + app/catalog + registry    │   │
                            │   │  team:   agno (coordinator)          │   │
+                           │   │          + catalog teams             │   │
+                           │   │  workflows: catalog workflows        │   │
                            │   │                                      │   │
                            │   │  watchdog ─▶ debounce ─▶ embed       │   │
                            │   └───┬─────────────┬──────────────┬─────┘   │
@@ -52,9 +55,12 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │  LLM  │             │              │         │
                            └───────┼─────────────┼──────────────┼─────────┘
                                    ▼             ▼              ▼
-                            OpenRouter     OpenAI (or any   agentos-otel
-                            /api/v1        OpenAI-compatible  (Phoenix)
-                                           embeddings host)    :6006
+                            OpenRouter     OpenRouter or    agentos-otel
+                            /api/v1        any OpenAI-compat. (Phoenix)
+                            chat +         embeddings host     :6006
+                            embeddings                         assistant uses
+                                                               the same
+                                                               OpenRouter key
 
    volumes
      ./workspace_files  ──▶ /app/workspace_files   (watched, read-write)
@@ -88,12 +94,14 @@ modules are now layered so imports only ever point downwards:
      ▲                          ▲                              ▲
      │                          │                              │
   agents/store ◀──────── tools/platform_tools ──────────────────┘
-     ▲                          ▲
-     └──── agents/runtime ──────┘
-                 ▲
-           bridge/openwebui_router
-                 ▲
-              main
+     ▲                 ▲        tools/phoenix_tools
+     │                 │                ▲
+  catalog_loader ──────┴──── agents/runtime ──────┘
+                                   ▲
+                             bridge/openwebui_router
+                                   ▲
+                                main
+                         control_plane (CORS only)
 ```
 
 `agents/store` never imports `runtime`. Instead `runtime` calls
@@ -189,7 +197,45 @@ single large table.
 
 **The registry is a JSON file, not a table.** It is small, operator-editable
 and belongs to the deployment rather than to the data. Writes are atomic
-(`mkstemp` + `os.replace`).
+(`mkstemp` + `os.replace`). Catalog files under `app/catalog/` are the
+source of truth for agents marked `source=catalog`; the builder's agents
+stay beside them.
+
+---
+
+## 5. Current behaviour (after the review)
+
+The tables above are the review record. These later facts supersede them
+where they disagree.
+
+**OpenRouter serves embeddings.** Finding 10 was true of the catalogue at
+review time. OpenRouter now exposes `POST /v1/embeddings` and lists models
+such as `openai/text-embedding-3-small`. Embeddings stay a separate setting.
+An empty `EMBEDDING_API_KEY` is reused from `OPENROUTER_API_KEY` only when
+`EMBEDDING_BASE_URL` contains `openrouter.ai`. The default in `.env.example`
+is still the OpenAI API.
+
+**Catalog files are the way to add a model.** `app/catalog/agents/<id>.json`
+is synced into `registry.json`, given the knowledge folder
+`workspace_files/agents/<id>/`, and advertised on `/v1/models`, so Open WebUI
+picks it up without a manual connection. `app/catalog/teams/` and
+`app/catalog/workflows/` follow the same rule. A team is not built until
+every member id exists. Files prefixed with `_` are examples.
+
+**`platform-telemetry` reads Phoenix.** It calls Phoenix's REST API on the
+OTLP base URL for projects, traces and spans. Compose copies the OpenRouter
+key and base URL onto the Phoenix container as `OPENAI_API_KEY` and
+`OPENAI_BASE_URL`. `make phoenix-mcp` registers `http://localhost:6006/mcp`
+with a coding agent.
+
+**The control plane is a browser call to localhost.** `https://os.agno.com`
+connects to `http://localhost:8000` with `OS_SECURITY_KEY`. Chrome's
+private-network preflight is allowed by `app/control_plane.py`, which sets
+Starlette's `allow_private_network` after AgentOS installs CORS. `make
+agentos` starts the API, Postgres and Phoenix without Open WebUI.
+
+**Reserved ids** are `platform-builder`, `platform-engineer`,
+`platform-manager`, `platform-telemetry` and `agno`.
 
 ---
 
@@ -199,7 +245,7 @@ and belongs to the deployment rather than to the data. Writes are atomic
 |---|---|---|
 | Agno API surface | Imported `agno==3.1.4` and read signatures for `AgentOS`, `Knowledge`, `PgVector`, `OpenAIEmbedder`, `OpenRouter`, `Agent`, `Team` | Every call site in this repo matches |
 | `AgentOS.resync` exists | `inspect.signature(AgentOS.resync)` | `(self, app: FastAPI) -> None` |
-| OpenRouter has no embeddings | `GET https://openrouter.ai/api/v1/models` | 470 models, zero embedding models |
+| OpenRouter has no embeddings | `GET https://openrouter.ai/api/v1/models` at review time | True then. Superseded: `/v1/embeddings` and `openai/text-embedding-3-small` exist now. See §5 |
 | `anthropic/claude-3.7-sonnet` is gone | Same catalogue | Absent; `claude-sonnet-4.5` present |
 | OpenInference instrumentor works on Agno 3.x | `AgnoInstrumentor().instrument()` against 3.1.4 | Succeeds (it declares `agno>=2.7.2`) |
 | Traversal guard | Reverted the fix to `startswith` and re-ran the suite | `test_rejects_sibling_with_shared_prefix` fails, then passes again |
