@@ -33,6 +33,7 @@ from agno.os.settings import AgnoAPISettings  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
 from app.agents import runtime  # noqa: E402
+from app.bridge import openwebui_sync  # noqa: E402
 from app.bridge.openwebui_router import router as openwebui_router  # noqa: E402
 from app.catalog_loader import start_watcher, stop_watcher  # noqa: E402
 from app.control_plane import enable_private_network_cors  # noqa: E402
@@ -55,6 +56,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         start_watcher(runtime.reload_dynamic_agents)
     except Exception as exc:  # pragma: no cover - depends on host filesystem
         logger.warning("Catalog watcher could not start: %s", exc)
+    openwebui_sync.ensure_synced_in_background(retries=5, delay_seconds=3.0)
     try:
         yield
     finally:
@@ -150,6 +152,8 @@ if settings.llm_configured:
             _running.workflows = runtime.get_catalog_workflows()
             _running.resync(app)
             logger.info("OAP resynced with %d agents", len(_running.agents or []))
+            if settings.openwebui_auto_sync:
+                openwebui_sync.ensure_synced_in_background()
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("OAP resync failed: %s", exc)
 

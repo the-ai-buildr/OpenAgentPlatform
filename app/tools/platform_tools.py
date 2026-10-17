@@ -22,6 +22,7 @@ from app.agents.store import (
     resolve_agent_target_folder,
     upsert_spec,
 )
+from app.bridge import openwebui_sync
 from app.knowledge import knowledge_manager as km
 from app.knowledge.file_watcher import watcher_service
 from app.knowledge.paths import UnsafePathError, folder_to_table_name, normalise_folder
@@ -161,7 +162,11 @@ def create_or_update_agent(
                 enable_web_search=enable_web_search,
             )
         )
-        return {"status": "ok", "agent": spec.to_dict()}
+        return {
+            "status": "ok",
+            "agent": spec.to_dict(),
+            "openwebui_sync": sync_openwebui_models(),
+        }
     except (RegistryError, UnsafePathError, OSError) as exc:
         return _error(exc)
 
@@ -171,7 +176,20 @@ def delete_custom_agent(agent_id: str) -> dict[str, Any]:
     if agent_id in RESERVED_AGENT_IDS:
         return {"status": "error", "error": f"'{agent_id}' is a core platform agent"}
     removed = delete_spec(agent_id)
-    return {"status": "ok" if removed else "not_found", "agent_id": agent_id}
+    result: dict[str, Any] = {"status": "ok" if removed else "not_found", "agent_id": agent_id}
+    if removed:
+        result["openwebui_sync"] = sync_openwebui_models()
+    return result
+
+
+def sync_openwebui_models() -> dict[str, Any]:
+    """Synchronize all registered OAP agents into Open WebUI's Workspace -> Models list.
+
+    Creates or updates a visible Workspace Model preset (`agent.<id>`) and a
+    hidden base model record (`<id>`) for the coordinator and every registered
+    agent, removes deleted custom agents, and aligns Open WebUI's default model.
+    """
+    return openwebui_sync.sync_models_to_openwebui()
 
 
 def list_registered_agents() -> dict[str, Any]:
@@ -291,6 +309,7 @@ def inspect_platform_health() -> dict[str, Any]:
         "watcher": watcher_service.status(),
         "workspace_folders": km.known_folders(),
         "agents": list_registered_agents(),
+        "openwebui_sync": openwebui_sync.get_last_sync_result(),
     }
 
 
@@ -303,11 +322,21 @@ WORKSPACE_TOOLS = [
     inspect_file_watcher_status,
 ]
 
-REGISTRY_TOOLS = [create_or_update_agent, delete_custom_agent, list_registered_agents]
+REGISTRY_TOOLS = [
+    create_or_update_agent,
+    delete_custom_agent,
+    list_registered_agents,
+    sync_openwebui_models,
+]
 
 SOURCE_TOOLS = [list_project_files, read_source_file]
 
-HEALTH_TOOLS = [inspect_platform_health, inspect_file_watcher_status, list_registered_agents]
+HEALTH_TOOLS = [
+    inspect_platform_health,
+    inspect_file_watcher_status,
+    list_registered_agents,
+    sync_openwebui_models,
+]
 
 
 def project_file_path(relative_path: str) -> Path:

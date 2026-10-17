@@ -291,6 +291,8 @@ def initialize() -> None:
 def reload_dynamic_agents() -> dict[str, Any]:
     """Rebuild custom agents from the registry and notify the platform."""
     catalog_loader.refresh(notify=False)
+    if not settings.llm_configured:
+        return {}
     with _lock:
         if not _core_agents:
             initialize()
@@ -467,13 +469,21 @@ def describe_agents() -> list[dict[str, str]]:
         return []
     agents = get_all_agents_dict()
     entries = [
-        {"id": TEAM_ID, "name": TEAM_NAME, "kind": "team"},
+        {
+            "id": TEAM_ID,
+            "name": TEAM_NAME,
+            "kind": "team",
+            "description": "Routes platform work to the right specialist agent",
+        },
     ]
     entries.extend(
         {
             "id": agent_id,
             "name": getattr(agent, "name", agent_id) or agent_id,
             "kind": "agent",
+            "description": str(
+                getattr(agent, "role", None) or getattr(agent, "description", None) or ""
+            ),
         }
         for agent_id, agent in agents.items()
     )
@@ -482,6 +492,9 @@ def describe_agents() -> list[dict[str, str]]:
             "id": team_id,
             "name": getattr(team, "name", team_id) or team_id,
             "kind": "team",
+            "description": str(
+                getattr(team, "description", None) or getattr(team, "role", None) or ""
+            ),
         }
         for team_id, team in _catalog_teams.items()
     )
@@ -490,6 +503,7 @@ def describe_agents() -> list[dict[str, str]]:
             "id": workflow_id,
             "name": getattr(workflow, "name", workflow_id) or workflow_id,
             "kind": "workflow",
+            "description": str(getattr(workflow, "description", None) or ""),
         }
         for workflow_id, workflow in _catalog_workflows.items()
     )

@@ -15,6 +15,7 @@ from app.bridge.openwebui_router import (
     get_runner_factory,
     last_user_message,
     message_text,
+    normalise_model_id,
     router,
     run_failed,
     session_id_for,
@@ -292,3 +293,35 @@ class TestPromptHelpers:
     def test_session_id_prefers_an_explicit_session(self):
         request = ChatCompletionRequest(session_id="s1", chat_id="c1")
         assert session_id_for(request, "oap", "tyler") == "s1"
+
+    @pytest.mark.parametrize(
+        ("raw_model", "expected"),
+        [
+            ("oap", "oap"),
+            ("agent.oap", "oap"),
+            ("agent.platform-builder", "platform-builder"),
+            ("oap.platform-engineer", "platform-engineer"),
+            (None, "oap"),
+            ("", "oap"),
+        ],
+    )
+    def test_normalise_model_id_strips_workspace_and_pipe_prefixes(self, raw_model, expected):
+        assert normalise_model_id(raw_model) == expected
+
+    def test_chat_completions_accepts_workspace_prefixed_model_id(self, api):
+        seen_models = []
+        runner = FakeRunner("ok")
+        api.app.dependency_overrides[get_runner_factory] = lambda: (
+            lambda model: seen_models.append(model) or runner
+        )
+        response = api.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={
+                "model": "agent.platform-builder",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert response.status_code == 200
+        assert seen_models == ["platform-builder"]
+        assert response.json()["model"] == "platform-builder"

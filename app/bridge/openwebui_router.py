@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from app.agents import runtime
 from app.agents.store import bind_folder_to_agent_if_custom, resolve_agent_target_folder
+from app.bridge import openwebui_sync
 from app.bridge.schemas import (
     ChatCompletionRequest,
     ChatMessage,
@@ -112,6 +113,18 @@ def session_id_for(request: ChatCompletionRequest, model: str, user_id: str) -> 
     return request.session_id or request.chat_id or f"owui-{model}-{user_id}"
 
 
+def normalise_model_id(model: str | None) -> str:
+    """Resolve an Open WebUI Workspace Model or Pipe ID (`agent.<id>`, `oap.<id>`) to its OAP id."""
+    if not model or not model.strip():
+        return runtime.TEAM_ID
+    cleaned = model.strip()
+    for prefix in ("agent.", "oap.", "agentos."):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+            break
+    return cleaned or runtime.TEAM_ID
+
+
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
@@ -123,8 +136,9 @@ def watcher_status() -> dict[str, Any]:
 @router.post("/files/route")
 def route_file(request: FileRouteRequest) -> dict[str, Any]:
     """Stage an Open WebUI upload into the workspace folder for an agent."""
+    agent_id = normalise_model_id(request.agent_id) if request.agent_id else request.agent_id
     try:
-        folder = resolve_agent_target_folder(request.agent_id, request.target_folder)
+        folder = resolve_agent_target_folder(agent_id, request.target_folder)
         result = km.stage_openwebui_upload(
             request.filename_query, folder, auto_index=request.auto_index
         )
@@ -134,12 +148,14 @@ def route_file(request: FileRouteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if request.bind_to_agent:
-        result["bound_to_agent"] = bind_folder_to_agent_if_custom(request.agent_id, folder)
+        result["bound_to_agent"] = bind_folder_to_agent_if_custom(agent_id, folder)
     return result
 
 
 @router.get("/models", response_model=ModelList)
 def list_models(catalog: list[dict[str, str]] = Depends(get_agent_catalog)) -> ModelList:
+    if openwebui_sync.get_last_sync_result().get("status") != "ok":
+        openwebui_sync.ensure_synced_in_background()
     return ModelList(
         data=[ModelCard(id=entry["id"], name=entry.get("name") or entry["id"]) for entry in catalog]
     )
@@ -150,7 +166,7 @@ async def chat_completions(
     request: ChatCompletionRequest,
     runner_factory: Callable[[str | None], Any] = Depends(get_runner_factory),
 ) -> Any:
-    model = request.model or runtime.TEAM_ID
+    model = normalise_model_id(request.model)
     user_id = request.user or "open-webui"
     prompt = last_user_message(request.messages)
     folder_tag, prompt = extract_folder_tag(prompt)

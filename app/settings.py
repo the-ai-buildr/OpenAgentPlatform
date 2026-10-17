@@ -67,6 +67,10 @@ class Settings(BaseSettings):
 
     # --- Bridge -------------------------------------------------------------
     max_staged_upload_bytes: int = 64 * 1024 * 1024
+    openwebui_base_url: str = "http://open-webui:8080"
+    openwebui_api_key: str = ""
+    webui_secret_key: str = ""
+    openwebui_auto_sync: bool = True
 
     @computed_field  # type: ignore[prop-decorator]
     @property
