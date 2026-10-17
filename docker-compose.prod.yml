@@ -1,0 +1,59 @@
+# Production overrides.
+#
+# Assumes a reverse proxy (Caddy, nginx, Traefik) terminates TLS in front of
+# Open WebUI. Only Open WebUI is published, and only on the loopback interface
+# so the proxy is the single ingress. The API, database and Phoenix UI are
+# reachable on the compose network only.
+
+services:
+  agentos-db:
+    # No published port: reach it with `make db-shell` or `docker compose exec`.
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  agentos-otel:
+    # Phoenix holds trace payloads; keep it off the public interface.
+    ports: !override []
+    logging: *default-logging
+
+  agentos-api:
+    restart: always
+    environment:
+      AGNO_DEBUG: "false"
+      OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-production}
+    # No source bind mount and no --reload: the image is the artefact.
+    volumes: !override
+      - ./workspace_files:/app/workspace_files
+      - openwebui_data:/app/openwebui_data:ro
+    command: !override
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "${UVICORN_WORKERS:-2}"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  open-webui:
+    restart: always
+    environment:
+      WEBUI_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL must be set for production}
+    ports: !override
+      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
+    logging: *default-logging

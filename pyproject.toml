@@ -1,0 +1,27 @@
+[project]
+name = "agno-agentos-openwebui"
+version = "1.0.0"
+description = "Agno AgentOS + FastAPI + OpenRouter + pgvector + Open WebUI, with OpenTelemetry tracing"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["workspace_files"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "RUF"]
+ignore = [
+    "B008",    # FastAPI dependencies are function calls in defaults by design
+    "RUF012",  # Open WebUI Valves classes use mutable class attributes
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `app/main.py` keeps inline `# noqa: E402` so the ordering constraint is
+# visible at the import that depends on it.
+"tests/*" = ["E501"]

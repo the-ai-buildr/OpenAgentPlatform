@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check app tests scripts
+
+      - name: Ruff format check
+        run: ruff format --check app tests scripts
+
+      - name: Pytest
+        run: pytest
+
+  compose-validate:
+    name: Validate compose files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate a .env with throwaway secrets
+        run: python scripts/init_env.py
+
+      - name: Validate the development configuration
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
+      - name: Validate the production configuration
+        env:
+          PUBLIC_BASE_URL: https://example.invalid
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+  build-image:
+    name: Build the API image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: agno-agentos-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start the API without any provider key and check it degrades cleanly
+        run: |
+          docker run -d --name agentos-ci -p 8000:8000 \
+            -e OTEL_ENABLED=false \
+            -e ENABLE_FILE_WATCHER=false \
+            -e OS_SECURITY_KEY=ci-test-key \
+            -e OPENROUTER_API_KEY= \
+            -e EMBEDDING_API_KEY= \
+            agno-agentos-api:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /tmp/health.json; then break; fi
+            sleep 2
+          done
+          cat /tmp/health.json
+          python - <<'PY'
+          import json
+          health = json.load(open("/tmp/health.json"))
+          assert health["status"] == "degraded", health
+          assert any("OPENROUTER_API_KEY" in r for r in health["degraded_reasons"]), health
+          print("health endpoint reports degraded as expected")
+          PY
+          curl -fsS -H 'Authorization: Bearer ci-test-key' http://localhost:8000/v1/models
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/v1/models)" = "401"
+
+      - name: API logs
+        if: always()
+        run: docker logs agentos-ci || true

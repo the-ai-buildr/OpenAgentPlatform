@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local data
+db/backups/
+workspace_files/**
+!workspace_files/*/
+!workspace_files/**/.gitkeep
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,39 @@
+# Runtime dependencies, pinned so a rebuild cannot silently change the stack.
+# `agno` is pinned exactly: the original stack's `agno>=2.0.0` resolves to the
+# 3.x line, whose Knowledge/AgentOS APIs are not source-compatible with 2.x.
+
+agno[os,mcp]==3.1.4
+
+# Web layer
+fastapi==0.143.3
+uvicorn[standard]==0.54.0
+pydantic-settings==2.16.0
+httpx==0.28.1
+
+# Models and embeddings (OpenAI-compatible clients for OpenRouter + OpenAI)
+openai==3.33.0
+
+# Postgres + pgvector
+# Held below 2.1 on purpose: opentelemetry-instrumentation-sqlalchemy declares
+# `sqlalchemy<2.1.0` and silently instruments nothing outside that range, which
+# would leave every database query untraced. Agno itself has no upper bound.
+SQLAlchemy==2.0.55
+psycopg[binary]==3.3.6
+pgvector==0.5.1
+
+# Document readers used by Knowledge for the supported file types
+pypdf==6.21.1
+python-docx==1.2.0
+
+# Workspace watcher and optional web search tool
+watchdog==6.0.0
+ddgs==9.16.0
+
+# OpenTelemetry -> Arize Phoenix (OTLP/HTTP)
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-fastapi==0.66b1
+opentelemetry-instrumentation-sqlalchemy==0.66b1
+opentelemetry-instrumentation-httpx==0.66b1
+openinference-instrumentation-agno==1.0.15

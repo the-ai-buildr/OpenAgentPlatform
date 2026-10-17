@@ -1,0 +1,33 @@
+# Local development overrides: published ports, source bind mount, autoreload.
+# Never use this file on a shared or internet-facing host.
+
+services:
+  agentos-db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+
+  agentos-api:
+    build:
+      target: runtime
+    # Bind-mounting the source is what makes --reload useful. Both belong to
+    # development only; the production image ships a copy of the code.
+    volumes:
+      - ./app:/app/app
+      - ./workspace_files:/app/workspace_files
+      - openwebui_data:/app/openwebui_data:ro
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
+    ports:
+      - "127.0.0.1:${AGENTOS_PORT:-8000}:8000"
+
+  open-webui:
+    ports:
+      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
