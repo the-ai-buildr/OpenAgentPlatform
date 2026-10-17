@@ -1,0 +1,6 @@
+{
+  "name": "Example Project",
+  "description": "Shows the shape of a catalog project. This file is not registered.",
+  "instructions": "Keep research notes and design decisions in the project folder.",
+  "members": ["project-dev", "project-researcher"]
+}

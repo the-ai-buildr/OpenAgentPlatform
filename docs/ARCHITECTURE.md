@@ -34,19 +34,20 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │   │    ├─ GET  /v1/models                │   │
                            │   │    ├─ POST /v1/chat/completions      │   │
                            │   │    ├─ POST /v1/files/route           │   │
-                           │   │    └─ GET  /v1/files/watcher-status  │   │
+                           │   │    ├─ GET  /v1/files/watcher-status  │   │
+                           │   │    └─ GET|POST /v1/runs/{id}[/...]   │   │
                            │   │  /health                             │   │
-                           │   │  /docs, /mcp, /agents, /sessions …   │   │
+                           │   │  /docs, /mcp, /agents, /schedules …  │   │
                            │   │         (AgentOS, Agno 3.1.4)        │   │
                            │   │                                      │   │
-                           │   │  agents: platform-builder            │   │
-                           │   │          platform-engineer           │   │
-                           │   │          platform-manager            │   │
-                           │   │          platform-telemetry          │   │
-                           │   │          + app/catalog + registry    │   │
-                           │   │  team:   oap (coordinator)           │   │
-                           │   │          + catalog teams             │   │
-                           │   │  workflows: catalog workflows        │   │
+                           │   │  platform: oap team ─▶ platform-*    │   │
+                           │   │    builder, engineer, manager,       │   │
+                           │   │    telemetry, skills, scheduler      │   │
+                           │   │  project:  project-dev (team + 4)    │   │
+                           │   │            project-researcher        │   │
+                           │   │            user project teams        │   │
+                           │   │  custom:   app/catalog + registry    │   │
+                           │   │  scheduler poller, durable queue     │   │
                            │   │                                      │   │
                            │   │  watchdog ─▶ debounce ─▶ embed       │   │
                            │   └───┬─────────────┬──────────────┬─────┘   │
@@ -77,7 +78,9 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
 3. The bridge takes the last user message, pulls out any `#folder:<path>` tag,
    and stages attached uploads into the resolved folder (idempotent — a
    byte-identical file already in place is not re-copied or re-embedded).
-4. The model id resolves to the `oap` team or a single agent.
+4. The model id resolves, in order, to the `oap` team, a platform or custom
+   agent, `project-dev` / `project-researcher`, a user project, a catalog team
+   or workflow, or a published Studio agent, falling back to `oap`.
 5. `arun(...)` streams `RunContentEvent`s, which are re-encoded as OpenAI SSE
    chunks terminated by `data: [DONE]`.
 
@@ -94,7 +97,8 @@ modules are now layered so imports only ever point downwards:
      ▲                          ▲                              ▲
      │                          │                              │
   agents/store ◀──────── tools/platform_tools ──────────────────┘
-     ▲                 ▲        tools/phoenix_tools
+     ▲                 ▲        tools/phoenix_tools, skill_tools,
+     │                 │        scheduler_tools, research_tools
      │                 │                ▲
   catalog_loader ──────┴──── agents/runtime ──────┘
                                    ▲
@@ -107,6 +111,8 @@ modules are now layered so imports only ever point downwards:
 `agents/store` never imports `runtime`. Instead `runtime` calls
 `store.subscribe(...)` at import time, so a tool that edits the registry
 triggers an agent rebuild through a callback rather than an upward import.
+The same inversion keeps `tools/scheduler_tools` free of `runtime`:
+`runtime.initialize()` hands it the shared database with `set_db_provider`.
 
 ---
 
@@ -234,8 +240,51 @@ private-network preflight is allowed by `app/control_plane.py`, which sets
 Starlette's `allow_private_network` after AgentOS installs CORS. `make
 oap` starts the API, Postgres and Phoenix without Open WebUI.
 
-**Reserved ids** are `platform-builder`, `platform-engineer`,
-`platform-manager`, `platform-telemetry` and `oap`.
+**Two groups.** `describe_agents()` tags every code-defined model with a
+`group`, which Open WebUI shows as a tag. `platform` is `oap` and its six
+`platform-*` members (`platform-skills` and `platform-scheduler` included).
+`project` is `project-dev`, `project-researcher` and every user project; none
+of them are members of `oap`, which points development and research requests
+at them instead. Custom agents, catalog teams and workflows are `custom`.
+
+**A team member belongs to exactly one team.** Agno's `Team` binds each
+member to itself when it initialises (`team_id`, `parent_team_id`, its result
+store) and does so again on every run. A shared instance would be re-bound by
+whichever team ran last. So `oap`, every user project and every catalog team is
+built with its own copies of `project-dev`, `project-researcher`, custom agents
+and platform agents, from the factories in `runtime`. A direct run of a
+`platform-*` agent therefore never carries `oap`'s team id. AgentOS only rejects
+duplicate *top-level* ids, so the repeated member ids are fine; the top-level
+lists are platform and custom agents plus `project-researcher`, and the teams
+`oap`, `project-dev`, user projects and catalog teams. A catalog team whose id
+matches a project is skipped.
+
+**Projects** (`store.ProjectSpec`) live under `projects` in `registry.json`.
+They come from `platform-builder`'s `create_or_update_project` tool or from
+`app/catalog/projects/<id>.json`, default to the folder `projects/<id>` and the
+members `project-dev` and `project-researcher`. A project's researcher saves
+reports into the project folder. Unknown members are skipped with a warning;
+a project with no resolvable member is not built. Registry changes rebuild
+projects; the standalone `project-dev` and `project-researcher` are built once.
+
+**Skills** load from `app/skills/` and then `workspace_files/skills/`, so a
+workspace skill overrides a bundled one with the same name. `platform-skills`
+and `project-dev` get every skill; the four `dev-*` subagents,
+`project-researcher` and custom agents (`AgentSpec.skills`) get subsets. A
+skill that fails to load is logged and left out instead of stopping startup.
+
+**Scheduler, HITL and background runs.** AgentOS runs its schedule poller
+(`ENABLE_SCHEDULER`) and calls back into `http://127.0.0.1:<OAP_PORT>`; Agno's
+default of port 7777 would miss this API. Deleting an agent, project, schedule
+or custom skill is a `requires_confirmation` tool, so the run pauses and the
+bridge asks for `approve` or `reject`. With `ENABLE_BACKGROUND_QUEUE`,
+`QueueConfig(durable=True)` stores accepted background runs in the AgentOS
+database, and `store_events` on the platform and project groups lets a client
+replay a run's events. `/health` reports both under `scheduler` and
+`background`.
+
+**Reserved ids** are `oap`, every `platform-*` id, `project-dev`,
+`project-researcher` and the four `dev-*` subagent ids.
 
 ---
 

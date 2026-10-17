@@ -3,7 +3,13 @@
 import json
 
 from app.agents.store import AgentSpec, load_specs, sync_catalog_agents, upsert_spec
-from app.catalog_loader import component_id, read_agent_files, read_team_files, read_workflow_files
+from app.catalog_loader import (
+    component_id,
+    read_agent_files,
+    read_project_files,
+    read_team_files,
+    read_workflow_files,
+)
 
 
 def test_example_files_are_not_registered(tmp_path):
@@ -63,3 +69,18 @@ def test_team_and_workflow_files_keep_their_members(tmp_path):
     assert teams[0].members == ["research"]
     assert workflows[0].workflow_id == "brief"
     assert workflows[0].agent_id == "research"
+
+
+def test_project_files_default_to_a_project_folder_and_the_project_group(tmp_path):
+    (tmp_path / "_example.json").write_text(json.dumps({"name": "Hidden"}))
+    (tmp_path / "project-dev.json").write_text(json.dumps({"name": "Shadow"}))
+    (tmp_path / "acme.json").write_text(json.dumps({"name": "Acme", "description": "Launch"}))
+    (tmp_path / "solo.json").write_text(json.dumps({"name": "Solo", "members": ["research"]}))
+
+    projects = {project.project_id: project for project in read_project_files(tmp_path)}
+
+    assert set(projects) == {"acme", "solo"}
+    assert projects["acme"].knowledge_folder == "projects/acme"
+    assert projects["acme"].members == ["project-dev", "project-researcher"]
+    assert projects["acme"].description == "Launch"
+    assert projects["solo"].members == ["research"]

@@ -28,6 +28,7 @@ logger = logging.getLogger("oap")
 
 init_tracing()
 
+from agno.job_queue import QueueConfig  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.settings import AgnoAPISettings  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -40,6 +41,9 @@ from app.control_plane import enable_private_network_cors  # noqa: E402
 from app.knowledge import knowledge_manager as km  # noqa: E402
 from app.knowledge.file_watcher import watcher_service  # noqa: E402
 from app.tools.platform_tools import database_status  # noqa: E402
+
+# Agno's scheduler defaults to port 7777; OAP serves on `oap_port`.
+SCHEDULER_BASE_URL = f"http://127.0.0.1:{settings.oap_port}"
 
 
 @asynccontextmanager
@@ -83,6 +87,8 @@ def health() -> dict[str, Any]:
         degraded_reasons.append("EMBEDDING_API_KEY is not set (knowledge indexing disabled)")
     if not db.get("reachable"):
         degraded_reasons.append(f"database unreachable: {db.get('error')}")
+    scheduler_running = _oap is not None and settings.enable_scheduler
+    queue_running = _oap is not None and settings.enable_background_queue
 
     return {
         "status": "ok" if not degraded_reasons else "degraded",
@@ -102,6 +108,18 @@ def health() -> dict[str, Any]:
         "database": {"reachable": db.get("reachable"), "pgvector": db.get("pgvector")},
         "telemetry": get_otel_status(),
         "watcher": {"running": watcher_service.running, "enabled": settings.enable_file_watcher},
+        "scheduler": {
+            "enabled": settings.enable_scheduler,
+            "running": scheduler_running,
+            "poll_interval_seconds": settings.scheduler_poll_interval,
+            "base_url": SCHEDULER_BASE_URL,
+        },
+        "background": {
+            "queue_enabled": queue_running,
+            "durable": queue_running,
+            "max_concurrency": settings.background_max_concurrency,
+            "store_run_events": settings.store_run_events,
+        },
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
@@ -109,9 +127,21 @@ def health() -> dict[str, Any]:
             "chat_completions": "/v1/chat/completions",
             "file_route": "/v1/files/route",
             "watcher_status": "/v1/files/watcher-status",
+            "run_status": "/v1/runs/{run_id}",
+            "run_cancel": "/v1/runs/{run_id}/cancel",
+            "run_resolve": "/v1/runs/{run_id}/resolve",
+            "schedules": "/schedules" if _oap is not None else None,
+            "queue": "/queue" if queue_running else None,
             "mcp": "/mcp" if (_oap is not None and settings.enable_mcp_server) else None,
         },
     }
+
+
+def _queue_config() -> QueueConfig | None:
+    """Durable background queue stored in the AgentOS database (oap-db)."""
+    if not settings.enable_background_queue:
+        return None
+    return QueueConfig(durable=True, max_concurrency=settings.background_max_concurrency)
 
 
 def _build_oap() -> tuple[AgentOS, FastAPI]:
@@ -120,8 +150,8 @@ def _build_oap() -> tuple[AgentOS, FastAPI]:
         id=settings.oap_id,
         name="Open Agent Platform",
         description="Local Open Agent Platform. Connect os.agno.com to http://localhost:8000.",
-        agents=runtime.get_all_agents_list(),
-        teams=[runtime.get_team(), *runtime.get_catalog_teams()],
+        agents=runtime.get_agentos_agents(),
+        teams=runtime.get_agentos_teams(),
         workflows=runtime.get_catalog_workflows(),
         knowledge=km.get_all_knowledge_list(),
         db=runtime.get_db(),
@@ -132,6 +162,10 @@ def _build_oap() -> tuple[AgentOS, FastAPI]:
         lifespan=lifespan,
         base_app=base_app,
         on_route_conflict="preserve_base_app",
+        queue=_queue_config(),
+        scheduler=settings.enable_scheduler,
+        scheduler_poll_interval=settings.scheduler_poll_interval,
+        scheduler_base_url=SCHEDULER_BASE_URL,
     )
     app = oap.get_app()
     enable_private_network_cors(app)
@@ -145,10 +179,10 @@ if settings.llm_configured:
     _running = _oap
 
     def _resync() -> None:
-        """Re-register dynamically created agents with the running platform."""
+        """Re-register dynamically created agents and projects with the running platform."""
         try:
-            _running.agents = runtime.get_all_agents_list()
-            _running.teams = [runtime.get_team(), *runtime.get_catalog_teams()]
+            _running.agents = runtime.get_agentos_agents()
+            _running.teams = runtime.get_agentos_teams()
             _running.workflows = runtime.get_catalog_workflows()
             _running.resync(app)
             logger.info("OAP resynced with %d agents", len(_running.agents or []))

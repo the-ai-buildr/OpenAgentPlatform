@@ -24,8 +24,8 @@ from app.bridge.openwebui_router import (
 from app.bridge.schemas import ChatCompletionRequest, ChatMessage
 
 CATALOG = [
-    {"id": "oap", "name": "Platform Coordinator", "kind": "team"},
-    {"id": "platform-builder", "name": "Platform Builder", "kind": "agent"},
+    {"id": "oap", "name": "Platform Coordinator", "kind": "team", "group": "platform"},
+    {"id": "platform-builder", "name": "Platform Builder", "kind": "agent", "group": "platform"},
 ]
 
 
@@ -102,6 +102,23 @@ class TestModels:
     def test_includes_display_names(self, api):
         data = api.get("/v1/models", headers=AUTH).json()["data"]
         assert data[0]["name"] == "Platform Coordinator"
+
+    def test_includes_group_and_kind(self, api):
+        data = api.get("/v1/models", headers=AUTH).json()["data"]
+        assert [(m["group"], m["kind"]) for m in data] == [("platform", "team"), ("platform", "agent")]
+
+    def test_project_entries_and_missing_metadata(self, api):
+        api.app.dependency_overrides[get_agent_catalog] = lambda: [
+            {"id": "project-dev", "name": "Project Dev", "kind": "team", "group": "project"},
+            {"id": "acme", "kind": "team", "group": "project"},
+            {"id": "research"},
+        ]
+        data = api.get("/v1/models", headers=AUTH).json()["data"]
+        assert data[0]["group"] == "project"
+        assert data[1]["name"] == "acme"
+        assert data[2]["group"] is None
+        assert data[2]["kind"] is None
+        assert data[2]["name"] == "research"
 
 
 class TestChatCompletions:

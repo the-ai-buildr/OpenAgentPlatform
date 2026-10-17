@@ -7,9 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# curl is kept in the final image because the compose healthcheck uses it.
+# curl is kept in the final image because the compose healthcheck uses it;
+# git is used by platform-skills to sync upstream skill repositories.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl git \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS builder
@@ -32,6 +33,9 @@ COPY ./openwebui_functions /app/openwebui_functions
 RUN mkdir -p /app/workspace_files/general \
              /app/workspace_files/sops \
              /app/workspace_files/contracts \
+             /app/workspace_files/skills \
+             /app/workspace_files/research \
+             /app/workspace_files/projects \
              /app/openwebui_data \
     && useradd --create-home --uid 10001 oap \
     && chown -R oap:oap /app

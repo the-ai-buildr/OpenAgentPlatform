@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     oap_builder_model: str = "anthropic/claude-sonnet-5.5"
     oap_engineer_model: str = "anthropic/claude-sonnet-5.5"
     oap_manager_model: str = "anthropic/claude-haiku-5.5"
+    oap_skills_model: str = "anthropic/claude-sonnet-5.5"
+    oap_scheduler_model: str = "anthropic/claude-haiku-5.5"
+    oap_dev_model: str = "anthropic/claude-sonnet-5.5"
+    oap_researcher_model: str = "anthropic/claude-sonnet-5.5"
     oap_model_max_tokens: int = 16384
 
     # --- Embeddings ---------------------------------------------------------
@@ -47,6 +51,14 @@ class Settings(BaseSettings):
     oap_telemetry: bool = False
     oap_debug: bool = False
     enable_mcp_server: bool = True
+
+    # --- Research, scheduler & background execution ------------------------
+    agentql_api_key: str = ""
+    enable_scheduler: bool = True
+    scheduler_poll_interval: int = 15
+    enable_background_queue: bool = True
+    background_max_concurrency: int = 16
+    store_run_events: bool = True
 
     # --- File watcher -------------------------------------------------------
     enable_file_watcher: bool = True

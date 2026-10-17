@@ -31,9 +31,28 @@ class ChatCompletionRequest(BaseModel):
     model: str | None = None
     messages: list[ChatMessage] = Field(default_factory=list)
     stream: bool = False
+    background: bool = False
     user: str | None = None
     files: list[dict[str, Any]] = Field(default_factory=list)
     chat_id: str | None = None
+    session_id: str | None = None
+
+
+class RunResolveRequest(BaseModel):
+    """Payload to confirm or reject a paused Human-in-the-Loop (HITL) run."""
+
+    model: str | None = None
+    session_id: str | None = None
+    user: str | None = None
+    decision: Literal["confirm", "reject"] = "confirm"
+    note: str | None = None
+    stream: bool = False
+
+
+class RunCancelRequest(BaseModel):
+    """Payload to cancel an in-flight or background run."""
+
+    model: str | None = None
     session_id: str | None = None
 
 
@@ -43,6 +62,8 @@ class ModelCard(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "oap"
     name: str | None = None
+    group: str | None = None
+    kind: str | None = None
 
 
 class ModelList(BaseModel):

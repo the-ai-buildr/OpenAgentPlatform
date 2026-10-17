@@ -25,9 +25,14 @@ pgvector==0.5.1
 pypdf==6.21.1
 python-docx==1.2.0
 
-# Workspace watcher and optional web search tool
+# Workspace watcher, skills frontmatter, and research toolkits
 watchdog==6.0.0
 ddgs==9.16.0
+arxiv==4.0.1
+beautifulsoup4==4.15.0
+newspaper4k==0.9.6
+lxml_html_clean==0.4.5
+pyyaml==6.0.3
 
 # OpenTelemetry -> Arize Phoenix (OTLP/HTTP)
 opentelemetry-api==1.45.1

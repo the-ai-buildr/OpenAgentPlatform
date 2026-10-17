@@ -149,6 +149,15 @@ def _has_oap_tag(model: dict[str, Any]) -> bool:
     return False
 
 
+def _model_tags(entry: dict[str, str]) -> list[dict[str, str]]:
+    kind = entry.get("kind") or "agent"
+    tags: list[dict[str, str]] = [{"name": OAP_TAG}, {"name": kind}]
+    group = (entry.get("group") or "").strip()
+    if group and group != kind and not any(t.get("name") == group for t in tags):
+        tags.append({"name": group})
+    return tags
+
+
 def _base_model_payload(
     entry: dict[str, str], existing: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -157,7 +166,6 @@ def _base_model_payload(
         if isinstance(existing, dict) and isinstance(existing.get("params"), dict)
         else {}
     )
-    kind = entry.get("kind") or "agent"
     return {
         "id": entry["id"],
         "base_model_id": None,
@@ -165,7 +173,7 @@ def _base_model_payload(
         "meta": {
             "hidden": True,
             "description": entry.get("description") or "",
-            "tags": [{"name": OAP_TAG}, {"name": kind}],
+            "tags": _model_tags(entry),
         },
         "params": existing_params,
         "access_grants": [PUBLIC_READ_GRANT],
@@ -181,7 +189,6 @@ def _workspace_model_payload(
         if isinstance(existing, dict) and isinstance(existing.get("params"), dict)
         else {}
     )
-    kind = entry.get("kind") or "agent"
     return {
         "id": f"{WORKSPACE_MODEL_PREFIX}{entry['id']}",
         "base_model_id": entry["id"],
@@ -189,7 +196,7 @@ def _workspace_model_payload(
         "meta": {
             "hidden": False,
             "description": entry.get("description") or "",
-            "tags": [{"name": OAP_TAG}, {"name": kind}],
+            "tags": _model_tags(entry),
             "capabilities": {
                 "file_upload": True,
                 "citations": True,

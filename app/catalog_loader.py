@@ -1,9 +1,14 @@
-"""Load custom agents, teams and workflows from `app/catalog`.
+"""Load custom agents, teams, workflows and projects from `app/catalog`.
 
 A file named `research.json` becomes the model `research` in Open WebUI.
 Its default knowledge folder is `workspace_files/agents/research`, so files
 dropped there belong to that agent. Files whose names start with `_` or `.`
 are examples and are not registered.
+
+Projects (`app/catalog/projects/acme.json`) are synced into the registry like
+agents, default to the folder `workspace_files/projects/acme`, and to the
+members `project-dev` and `project-researcher`. Team and project members may
+name `project-dev` and `project-researcher` as well as custom agents.
 """
 
 from __future__ import annotations
@@ -15,7 +20,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.agents.store import RESERVED_AGENT_IDS, AgentSpec, RegistryError, sync_catalog_agents
+from app.agents.store import (
+    RESERVED_AGENT_IDS,
+    AgentSpec,
+    ProjectSpec,
+    RegistryError,
+    sync_catalog_agents,
+    sync_catalog_projects,
+)
 from app.knowledge.paths import folder_dir
 from app.settings import WORKSPACE_ROOT
 
@@ -25,6 +37,7 @@ CATALOG_ROOT = Path(__file__).resolve().parent / "catalog"
 AGENTS_DIR = CATALOG_ROOT / "agents"
 TEAMS_DIR = CATALOG_ROOT / "teams"
 WORKFLOWS_DIR = CATALOG_ROOT / "workflows"
+PROJECTS_DIR = CATALOG_ROOT / "projects"
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 _team_files: list[TeamFile] = []
@@ -138,6 +151,22 @@ def read_workflow_files(directory: Path | None = None) -> list[WorkflowFile]:
     return workflows
 
 
+def read_project_files(directory: Path | None = None) -> list[ProjectSpec]:
+    projects: list[ProjectSpec] = []
+    for path in _json_files(directory or PROJECTS_DIR):
+        project_id = component_id(path)
+        raw = _read_json(path)
+        if project_id is None or raw is None:
+            continue
+        raw["project_id"] = project_id
+        raw.setdefault("knowledge_folder", f"projects/{project_id}")
+        try:
+            projects.append(ProjectSpec.from_dict(raw))
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Skipping catalog project %s: %s", path.name, exc)
+    return projects
+
+
 def team_files() -> list[TeamFile]:
     return list(_team_files)
 
@@ -154,16 +183,21 @@ def _ensure_folder(folder: str) -> None:
 
 
 def refresh(*, notify: bool = True) -> None:
-    """Read the catalog and sync agents into the registry."""
+    """Read the catalog and sync agents and projects into the registry."""
     global _team_files, _workflow_files
-    for directory in (AGENTS_DIR, TEAMS_DIR, WORKFLOWS_DIR):
+    for directory in (AGENTS_DIR, TEAMS_DIR, WORKFLOWS_DIR, PROJECTS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
     specs = read_agent_files()
     try:
         sync_catalog_agents(specs, notify=notify)
     except RegistryError as exc:
         logger.warning("Catalog agent sync failed: %s", exc)
-    for spec in specs:
+    projects = read_project_files()
+    try:
+        sync_catalog_projects(projects, notify=notify)
+    except RegistryError as exc:
+        logger.warning("Catalog project sync failed: %s", exc)
+    for spec in (*specs, *projects):
         if spec.knowledge_folder:
             _ensure_folder(spec.knowledge_folder)
     _team_files = read_team_files()

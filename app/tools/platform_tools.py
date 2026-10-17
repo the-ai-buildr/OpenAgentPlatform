@@ -12,14 +12,24 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from agno.tools import tool
+
 from app.agents.store import (
+    DEFAULT_PROJECT_MEMBERS,
+    PLATFORM_AGENT_IDS,
+    PROJECT_TEMPLATE_IDS,
     RESERVED_AGENT_IDS,
     AgentSpec,
+    ProjectSpec,
     RegistryError,
     bind_folder_to_agent_if_custom,
+    delete_project_spec,
     delete_spec,
+    get_project,
+    load_projects,
     load_specs,
     resolve_agent_target_folder,
+    upsert_project,
     upsert_spec,
 )
 from app.bridge import openwebui_sync
@@ -144,11 +154,13 @@ def create_or_update_agent(
     model_id: str | None = None,
     knowledge_folder: str | None = None,
     enable_web_search: bool = False,
+    skills: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new specialist agent, or update one that already exists.
 
     Core platform agents cannot be replaced. Omitting `knowledge_folder` on an
-    update keeps the agent's existing folder binding.
+    update keeps the agent's existing folder binding. Pass `skills` as a list
+    of skill names (or `["*"]` for all skills) to attach skills to the agent.
     """
     try:
         spec = upsert_spec(
@@ -160,6 +172,7 @@ def create_or_update_agent(
                 model_id=model_id,
                 knowledge_folder=knowledge_folder,
                 enable_web_search=enable_web_search,
+                skills=skills or [],
             )
         )
         return {
@@ -182,6 +195,83 @@ def delete_custom_agent(agent_id: str) -> dict[str, Any]:
     return result
 
 
+delete_custom_agent.requires_confirmation = True  # type: ignore[attr-defined]
+
+
+def create_or_update_project(
+    project_id: str,
+    name: str,
+    description: str = "",
+    instructions: str = "",
+    members: list[str] | None = None,
+    knowledge_folder: str | None = None,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    """Create or update a user Project in the `project` group.
+
+    Creates a dedicated workspace folder (`projects/<project_id>` by default)
+    and attaches reusable project specialists (`project-dev`, `project-researcher`)
+    plus any custom agent IDs listed in `members`. Omitting `knowledge_folder` or
+    `members` on an update keeps the project's existing folder binding and members.
+    """
+    try:
+        pid = project_id.strip()
+        if not pid:
+            raise RegistryError("project_id is required")
+        if members is None:
+            existing = get_project(pid)
+            members = existing.members if existing else None
+        folder = knowledge_folder if knowledge_folder and knowledge_folder.strip() else None
+        spec = upsert_project(
+            ProjectSpec(
+                project_id=pid,
+                name=name.strip() or pid,
+                description=description,
+                instructions=instructions,
+                members=members or list(DEFAULT_PROJECT_MEMBERS),
+                knowledge_folder=folder,
+                model_id=model_id,
+            )
+        )
+        km.ensure_folder(spec.knowledge_folder)
+        return {
+            "status": "ok",
+            "project": spec.to_dict(),
+            "openwebui_sync": sync_openwebui_models(),
+        }
+    except (RegistryError, UnsafePathError, OSError) as exc:
+        return _error(exc)
+
+
+def list_projects() -> dict[str, Any]:
+    """List built-in project templates and user-created projects.
+
+    The templates are `project-dev` and `project-researcher`.
+    """
+    return {
+        "status": "ok",
+        "project_templates": ["project-dev", "project-researcher"],
+        "projects": [p.to_dict() for p in load_projects()],
+    }
+
+
+def delete_project(project_id: str) -> dict[str, Any]:
+    """Remove a user-created project from the registry. Built-in specialists cannot be deleted."""
+    if project_id in RESERVED_AGENT_IDS:
+        return {
+            "status": "error",
+            "error": f"'{project_id}' is a core platform or project specialist",
+        }
+    removed = delete_project_spec(project_id)
+    result: dict[str, Any] = {"status": "ok" if removed else "not_found", "project_id": project_id}
+    if removed:
+        result["openwebui_sync"] = sync_openwebui_models()
+    return result
+
+
+delete_project.requires_confirmation = True  # type: ignore[attr-defined]
+
+
 def sync_openwebui_models() -> dict[str, Any]:
     """Synchronize all registered OAP agents into Open WebUI's Workspace -> Models list.
 
@@ -193,11 +283,14 @@ def sync_openwebui_models() -> dict[str, Any]:
 
 
 def list_registered_agents() -> dict[str, Any]:
-    """List the core platform agents and every custom agent in the registry."""
+    """List core platform agents, project templates, custom agents, and user projects."""
     return {
         "status": "ok",
         "core_agents": sorted(RESERVED_AGENT_IDS),
+        "platform_agents": sorted(PLATFORM_AGENT_IDS),
+        "project_templates": sorted(PROJECT_TEMPLATE_IDS),
         "custom_agents": [spec.to_dict() for spec in load_specs()],
+        "projects": [p.to_dict() for p in load_projects()],
     }
 
 
@@ -313,6 +406,41 @@ def inspect_platform_health() -> dict[str, Any]:
     }
 
 
+def check_background_run_status(
+    agent_or_team_id: str,
+    run_id: str,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Inspect the status and output of a background or paused run on an agent or team."""
+    try:
+        from app.agents import runtime
+
+        runner = runtime.get_runner(agent_or_team_id.strip())
+        if runner is None:
+            return {"status": "error", "error": f"Unknown agent or team: {agent_or_team_id!r}"}
+        if not hasattr(runner, "get_run_output"):
+            return {
+                "status": "error",
+                "error": f"Runner {agent_or_team_id!r} does not support run lookup",
+            }
+        result = runner.get_run_output(run_id=run_id, session_id=session_id)
+        if result is None:
+            return {"status": "not_found", "run_id": run_id, "agent_or_team_id": agent_or_team_id}
+        raw_status = getattr(result, "status", None)
+        status_str = str(getattr(raw_status, "value", raw_status) or "UNKNOWN").upper()
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "agent_or_team_id": agent_or_team_id,
+            "session_id": getattr(result, "session_id", session_id),
+            "run_status": status_str,
+            "is_paused": bool(getattr(result, "is_paused", False)),
+            "content": getattr(result, "content", None),
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
 WORKSPACE_TOOLS = [
     create_workspace_directory,
     list_workspace_directories_and_files,
@@ -324,7 +452,10 @@ WORKSPACE_TOOLS = [
 
 REGISTRY_TOOLS = [
     create_or_update_agent,
-    delete_custom_agent,
+    tool(requires_confirmation=True)(delete_custom_agent),
+    create_or_update_project,
+    list_projects,
+    tool(requires_confirmation=True)(delete_project),
     list_registered_agents,
     sync_openwebui_models,
 ]
@@ -335,6 +466,8 @@ HEALTH_TOOLS = [
     inspect_platform_health,
     inspect_file_watcher_status,
     list_registered_agents,
+    list_projects,
+    check_background_run_status,
     sync_openwebui_models,
 ]
 

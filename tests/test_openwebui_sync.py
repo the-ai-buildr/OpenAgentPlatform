@@ -252,6 +252,58 @@ class TestSyncModelsToOpenWebUI:
         assert fake.models["agent.oap"]["name"] == "Platform Coordinator"
         assert fake.models["agent.oap"]["params"] == {"temperature": 0.2}
 
+    def test_tags_models_with_their_platform_or_project_group(self, tmp_path: Path):
+        db_path = tmp_path / "webui.db"
+        _create_webui_db(db_path)
+        fake = FakeOpenWebUI()
+        catalog = [
+            {"id": "oap", "name": "Platform Coordinator", "kind": "team", "group": "platform"},
+            {"id": "platform-skills", "name": "Platform Skills", "kind": "agent", "group": "platform"},
+            {"id": "project-dev", "name": "Project Dev", "kind": "team", "group": "project"},
+            {"id": "project-researcher", "name": "Researcher", "kind": "agent", "group": "project"},
+            {"id": "acme", "name": "Acme", "kind": "team", "group": "project"},
+            {"id": "research", "name": "Research", "kind": "agent"},
+        ]
+
+        with httpx.Client(
+            transport=httpx.MockTransport(fake.handler), base_url="http://open-webui:8080"
+        ) as client:
+            result = sync_models_to_openwebui(
+                catalog, client=client, db_path=db_path, secret_key="test-webui-secret"
+            )
+
+        assert result["status"] == "ok"
+
+        def tag_names(model_id: str) -> list[str]:
+            return [t["name"] for t in fake.models[model_id]["meta"]["tags"]]
+
+        expected = {
+            "oap": ["OAP", "team", "platform"],
+            "platform-skills": ["OAP", "agent", "platform"],
+            "project-dev": ["OAP", "team", "project"],
+            "project-researcher": ["OAP", "agent", "project"],
+            "acme": ["OAP", "team", "project"],
+            "research": ["OAP", "agent"],
+        }
+        for agent_id, tags in expected.items():
+            assert tag_names(agent_id) == tags
+            assert tag_names(f"{WORKSPACE_MODEL_PREFIX}{agent_id}") == tags
+
+    def test_group_matching_kind_is_not_duplicated(self, tmp_path: Path):
+        db_path = tmp_path / "webui.db"
+        _create_webui_db(db_path)
+        fake = FakeOpenWebUI()
+        with httpx.Client(
+            transport=httpx.MockTransport(fake.handler), base_url="http://open-webui:8080"
+        ) as client:
+            sync_models_to_openwebui(
+                [{"id": "oap", "kind": "team", "group": "team"}],
+                client=client,
+                db_path=db_path,
+                secret_key="test-webui-secret",
+            )
+        assert [t["name"] for t in fake.models["agent.oap"]["meta"]["tags"]] == ["OAP", "team"]
+
     def test_skips_cleanly_when_unauthenticated_or_empty_catalog(self, tmp_path: Path):
         res_empty = sync_models_to_openwebui([], db_path=tmp_path / "missing.db", secret_key="")
         assert res_empty["status"] == "skipped"
@@ -293,5 +345,24 @@ class TestPlatformToolsIntegration:
         assert "agent.research" in created["openwebui_sync"]["workspace_models"]
 
         deleted = platform_tools.delete_custom_agent("research")
+        assert deleted["status"] == "ok"
+        assert deleted["openwebui_sync"]["status"] == "ok"
+
+    def test_create_and_delete_project_report_openwebui_sync_status(
+        self, registry_file: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.tools import platform_tools
+
+        monkeypatch.setattr(
+            platform_tools,
+            "sync_openwebui_models",
+            lambda: {"status": "ok", "workspace_models": ["agent.oap", "agent.acme"]},
+        )
+
+        created = platform_tools.create_or_update_project(project_id="acme", name="Acme")
+        assert created["status"] == "ok"
+        assert "agent.acme" in created["openwebui_sync"]["workspace_models"]
+
+        deleted = platform_tools.delete_project("acme")
         assert deleted["status"] == "ok"
         assert deleted["openwebui_sync"]["status"] == "ok"

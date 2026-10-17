@@ -1,9 +1,11 @@
 # OpenAgentPlatform
 
-A self-hosted agent platform: **Open Agent Platform** (FastAPI) behind **Open WebUI**,
-with per-folder **pgvector** knowledge bases, automatic document indexing, an
-**OpenAI-compatible bridge**, an **MCP** endpoint, and **OpenTelemetry** traces
+A self-hosted agent platform: **Open Agent Platform** (FastAPI) behind **Open WebUI**,  
+with per-folder **pgvector** knowledge bases, automatic document indexing, an  
+**OpenAI-compatible bridge**, an **MCP** endpoint, and **OpenTelemetry** traces  
 in **Arize Phoenix**. Everything runs in Docker with one command.
+
+
 
 ```
 Open WebUI  →  OAP /v1 bridge      →  agents + team       →  OpenRouter (chat)
@@ -15,9 +17,11 @@ Open WebUI  →  OAP /v1 bridge      →  agents + team       →  OpenRouter (c
 ```
 
 | | |
+
 |---|---|
-| **Agents** | `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, plus anything in `app/catalog/` |
-| **Team** | `oap` — routes a request to the right specialist |
+| **Platform group** | `oap` team routing to `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, `platform-skills`, `platform-scheduler` |
+| **Project group** | `project-dev` (dev team with four reviewers), `project-researcher`, and one team per user project — see [Platform and project groups](#platform-and-project-groups) |
+| **Custom** | Anything in `app/catalog/` or created by the Builder |
 | **Chat models** | Any model on [OpenRouter](https://openrouter.ai/models) |
 | **Embeddings** | OpenRouter or any OpenAI-compatible embeddings server — see [Chat and embeddings](#chat-and-embeddings) |
 | **Storage** | PostgreSQL 17 + pgvector 0.8.7 |
@@ -39,6 +43,7 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 - [Connecting Open WebUI](#connecting-open-webui)
 - [File routing and](#file-routing-and-folder-tags) `#folder:` [tags](#file-routing-and-folder-tags)
 - [Creating your own agents](#creating-your-own-agents)
+- [Platform and project groups](#platform-and-project-groups)
 - [Observability](#observability)
 - [MCP endpoint](#mcp-endpoint)
 - [Production deployment](#production-deployment)
@@ -246,21 +251,21 @@ one place.
 3. Paste the contents of
 
    [`openwebui_functions/oap_pipe_function.py`](openwebui_functions/oap_pipe_function.py)
-    and save it.
+     and save it.
 4. Toggle it **on**.
 5. Click the gear next to the function and set the valves:
    - `oap_base_url`: `http://oap-api:8000` (the compose service name —
-    *not* `localhost`, which inside the Open WebUI container means itself)
+   *not* `localhost`, which inside the Open WebUI container means itself)
    - `api_key`: your `OS_SECURITY_KEY` from `.env`
    - `auto_route_uploads`: leave **off** — the bridge already routes uploads
 6. Start a new chat. The model picker now lists:
    | Model | What it is |
-    |---|---|
-    | `OAP/Platform Coordinator` | the `oap` team — routes to a specialist |
-    | `OAP/Platform Builder` | creates agents and knowledge folders |
-    | `OAP/Platform Engineer` | explains this codebase |
-    | `OAP/Platform Manager` | health, routing, re-indexing |
-    | `OAP/<your agent>` | anything you create |
+     |---|---|
+     | `OAP/Platform Coordinator` | the `oap` team — routes to a specialist |
+     | `OAP/Platform Builder` | creates agents and knowledge folders |
+     | `OAP/Platform Engineer` | explains this codebase |
+     | `OAP/Platform Manager` | health, routing, re-indexing |
+     | `OAP/<your agent>` | anything you create |
 
 Start with the Coordinator unless you know which specialist you want.
 
@@ -428,8 +433,73 @@ The registry is a plain file you can edit and commit:
 }
 ```
 
-`platform-builder`, `platform-engineer`, `platform-manager`,
-`platform-telemetry` and `oap` are reserved and cannot be overwritten.
+`oap`, every `platform-*` id, `project-dev`, `project-researcher` and the
+`dev-*` subagent ids are reserved and cannot be overwritten.
+
+---
+
+## Platform and project groups
+
+Every model in `/v1/models` carries a `group`, and Open WebUI tags it with
+the same name.
+
+**Platform** (`oap` and `platform-`*) runs the deployment. The `oap` team
+routes to its six members:
+
+| Agent | Does |
+|---|---|
+| `platform-builder` | Creates agents and projects, binds folders |
+| `platform-engineer` | Explains and debugs this codebase |
+| `platform-manager` | Health, file routing, indexing, background run status |
+| `platform-telemetry` | Reads Phoenix traces and spans |
+| `platform-skills` | Lists, validates, recommends, writes and git-syncs skills; attaches them to agents |
+| `platform-scheduler` | Cron schedules for any agent or team endpoint, with run history |
+
+**Project** is for the work itself. None of it sits under `oap`; pick it in
+the model list or add it to a project.
+
+- `project-dev` is a team that plans, builds and reviews code. It delegates
+to `dev-code-reviewer`, `dev-test-engineer`, `dev-security-auditor` and
+`dev-perf-auditor`, each loaded with the matching skills.
+- `project-researcher` searches the web, news and arXiv, reads full articles
+and pages, and saves cited reports to `workspace_files/research/`.
+AgentQL joins its toolkits when `AGENTQL_API_KEY` is set.
+- A **project** is a team with its own knowledge folder
+(`workspace_files/projects/<id>/`). Its members default to `project-dev`
+and `project-researcher`, and may include custom agents. Each project gets
+its own copies of those members, and its researcher saves into the
+project's folder.
+
+Create a project in chat ("Create a project `acme` for the Acme launch") or
+with a file, `app/catalog/projects/acme.json`:
+
+```json
+{
+  "name": "Acme Launch",
+  "instructions": "Keep decisions and research in the project folder.",
+  "members": ["project-dev", "project-researcher", "research"]
+}
+```
+
+Catalog teams may also list `project-dev` and `project-researcher` as
+members. Projects are stored under `projects` in `app/agents/registry.json`.
+
+**Skills.** The 25 [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
+skills and OAP's `human-in-the-loop` skill live in `app/skills/`. Skills
+written or synced at runtime go to `workspace_files/skills/` and override a
+bundled skill with the same name. Give a custom agent skills with
+`"skills": ["test-driven-development"]` (or `["*"]` for all) in its spec.
+
+**Confirmation before destructive actions.** Deleting an agent, project,
+schedule or custom skill pauses the run. Reply `approve` (or `yes`) to go
+ahead, or `reject` (or `no`) to cancel; `POST /v1/runs/{run_id}/resolve` does
+the same from code.
+
+**Background runs.** Start a message with `#background`, or send
+`"background": true`, and the bridge returns a `run_id` at once. Poll
+`GET /v1/runs/{run_id}`, cancel with `POST /v1/runs/{run_id}/cancel`, or ask
+`platform-manager` for the status. Accepted runs are queued in Postgres and
+survive a restart.
 
 ---
 
@@ -649,6 +719,13 @@ Every variable is documented inline in
 | `MAX_STAGED_UPLOAD_BYTES`  | `67108864`                    | 64 MB cap on staged uploads                                                       |
 | `OTEL_ENABLED`             | `true`                        | Tracing master switch                                                             |
 | `ENABLE_MCP_SERVER`        | `true`                        | Serve `/mcp`                                                                      |
+| `OAP_SKILLS_MODEL`, `OAP_SCHEDULER_MODEL`, `OAP_DEV_MODEL`, `OAP_RESEARCHER_MODEL` | see `.env.example` | Models for `platform-skills`, `platform-scheduler`, `project-dev` and `project-researcher` |
+| `AGENTQL_API_KEY`          | —                             | Optional. Adds AgentQL to `project-researcher`                                    |
+| `ENABLE_SCHEDULER`         | `true`                        | Run due cron schedules                                                            |
+| `SCHEDULER_POLL_INTERVAL`  | `15`                          | Seconds between schedule checks                                                   |
+| `ENABLE_BACKGROUND_QUEUE`  | `true`                        | Queue background runs in Postgres so they survive restarts                        |
+| `BACKGROUND_MAX_CONCURRENCY` | `16`                        | Background runs executing at once                                                 |
+| `STORE_RUN_EVENTS`         | `true`                        | Persist run events so background runs can be replayed                             |
 | `DB_PASS`                  | generated                     | Baked into the volume on first start                                              |
 | `WEBUI_SECRET_KEY`         | generated                     | Open WebUI session signing                                                        |
 | `PUBLIC_BASE_URL`          | —                             | Required by `make prod-up`                                                        |
@@ -703,7 +780,7 @@ If you cannot authenticate at all, start the container once with
 2. If it works from the host but Open WebUI shows nothing, the Pipe's
 
    `oap_base_url` is probably `http://localhost:8000`. Inside the Open WebUI
-    container `localhost` is Open WebUI. Use `http://oap-api:8000`.
+     container `localhost` is Open WebUI. Use `http://oap-api:8000`.
 3. 401 in the logs means the Pipe's `api_key` valve does not match
 
    `OS_SECURITY_KEY`.
@@ -774,7 +851,9 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 │   ├── main.py                  Entrypoint: tracing, OAP, lifespan, /health
 │   ├── control_plane.py         Allows os.agno.com to call localhost
 │   ├── catalog_loader.py        Loads app/catalog into the registry and WebUI
-│   ├── catalog/                 agents/, teams/, workflows/ JSON definitions
+│   ├── catalog/                 agents/, teams/, workflows/, projects/ JSON definitions
+│   ├── skills/                  Bundled agent skills (addyosmani/agent-skills + human-in-the-loop)
+│   ├── skills_manager.py        Loads bundled and workspace skills
 │   ├── telemetry/otel.py        Tracer provider and library instrumentation
 │   ├── knowledge/
 │   │   ├── paths.py             Path containment and table naming (pure)
@@ -782,10 +861,13 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 │   │   └── file_watcher.py      Debounced auto-indexer
 │   ├── agents/
 │   │   ├── store.py             registry.json CRUD and folder rules (pure)
-│   │   ├── runtime.py           Builds agents, the coordinator, catalog teams and workflows
-│   │   └── registry.json        Custom agents, including ones synced from the catalog
+│   │   ├── runtime.py           Builds the platform and project groups, catalog teams and workflows
+│   │   └── registry.json        Custom agents and projects, including ones synced from the catalog
 │   ├── tools/
 │   │   ├── platform_tools.py    Tools the platform agents call
+│   │   ├── skill_tools.py       Skill listing, authoring and git sync for platform-skills
+│   │   ├── scheduler_tools.py   Cron schedule management for platform-scheduler
+│   │   ├── research_tools.py    Web, news, arXiv and page readers for project-researcher
 │   │   └── phoenix_tools.py     Read-only Phoenix project, trace and span queries
 │   └── bridge/
 │       ├── security.py          Bearer auth for /v1
