@@ -234,6 +234,25 @@ def _event_text(event: Any) -> str | None:
     return content if isinstance(content, str) and content else None
 
 
+def _event_error(event: Any) -> str | None:
+    """Message from a failed run event, if this event is one."""
+    if type(event).__name__ != "RunErrorEvent":
+        return None
+    return str(getattr(event, "content", None) or "the agent run failed")
+
+
+def run_failed(result: Any) -> bool:
+    """True when Agno finished the run in its error state.
+
+    Agno does not raise on a provider failure: it completes the run with
+    `status=RunStatus.error` and puts the provider's message in `content`.
+    Without this check an invalid API key reaches the user as a perfectly
+    ordinary-looking assistant reply saying "User not found."
+    """
+    status = getattr(result, "status", None)
+    return str(getattr(status, "value", status) or "").upper() == "ERROR"
+
+
 async def _stream_completion(
     runner: Any, prompt: str, model: str, session_id: str, user_id: str
 ) -> AsyncIterator[str]:
@@ -249,6 +268,14 @@ async def _stream_completion(
                 text = _event_text(event)
                 if text:
                     yield _chunk(model, completion_id, {"content": text})
+                    continue
+                failure = _event_error(event)
+                if failure:
+                    logger.error("Run failed for model %s: %s", model, failure)
+                    span.set_attribute("agno.run_failed", True)
+                    yield _chunk(
+                        model, completion_id, {"content": f"\n\n[agentos error] {failure}"}
+                    )
         except Exception as exc:
             logger.exception("Streaming run failed for model %s", model)
             span.record_exception(exc)
@@ -271,6 +298,14 @@ async def _complete(
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Agent run failed: {exc}"
             ) from exc
+
+        if run_failed(result):
+            message = getattr(result, "content", None) or "the agent run failed"
+            logger.error("Run failed for model %s: %s", model, message)
+            span.set_attribute("agno.run_failed", True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Agent run failed: {message}"
+            )
 
     content = getattr(result, "content", None)
     return {

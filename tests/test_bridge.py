@@ -16,6 +16,7 @@ from app.bridge.openwebui_router import (
     last_user_message,
     message_text,
     router,
+    run_failed,
     session_id_for,
     upload_names,
 )
@@ -164,6 +165,70 @@ class TestChatCompletions:
         assert body.rstrip().endswith("data: [DONE]")
         assert '"content": "he"' in body
         assert '"finish_reason": "stop"' in body
+
+
+class TestFailedRuns:
+    """Agno completes a failed run instead of raising, so the bridge must look."""
+
+    def test_provider_failure_is_an_error_not_an_assistant_message(self, api):
+        class Failed:
+            status = type("S", (), {"value": "ERROR"})()
+            content = "User not found."
+
+        class Runner:
+            async def arun(self, prompt, **kwargs):
+                return Failed()
+
+        api.app.dependency_overrides[get_runner_factory] = lambda: lambda model: Runner()
+        response = api.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert response.status_code == 502
+        assert "User not found." in response.json()["detail"]
+
+    def test_streaming_surfaces_a_run_error_event(self, api):
+        class ErrorEvent:
+            def __init__(self, content):
+                self.content = content
+
+        ErrorEvent.__name__ = "RunErrorEvent"
+
+        class Runner:
+            async def arun(self, prompt, **kwargs):
+                yield ErrorEvent("invalid api key")
+
+        api.app.dependency_overrides[get_runner_factory] = lambda: lambda model: Runner()
+        with api.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={"model": "agno", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+        ) as response:
+            body = "".join(response.iter_text())
+        assert "[agentos error] invalid api key" in body
+        assert body.rstrip().endswith("data: [DONE]")
+
+    @pytest.mark.parametrize(
+        ("status_value", "expected"),
+        [("ERROR", True), ("error", True), ("COMPLETED", False), (None, False)],
+    )
+    def test_run_failed_reads_the_status_field(self, status_value, expected):
+        result = type("R", (), {"status": status_value, "content": "x"})()
+        assert run_failed(result) is expected
+
+    def test_run_failed_handles_an_enum_like_status(self):
+        enum_like = type("S", (), {"value": "ERROR"})()
+        assert run_failed(type("R", (), {"status": enum_like})()) is True
+
+    def test_successful_run_is_not_treated_as_a_failure(self, api):
+        response = api.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={"model": "agno", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert response.status_code == 200
 
 
 class TestPromptHelpers:

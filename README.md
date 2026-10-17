@@ -645,6 +645,17 @@ volume, that mount no longer points at the uploads directory.
 The id is not in the OpenRouter catalogue, or your key has no access to it.
 Check it at <https://openrouter.ai/models>, and confirm you have credit.
 
+### `Agent run failed: User not found.` (or another 502)
+
+OpenRouter rejected the request. Almost always the key: `User not found.` is
+what OpenRouter returns for an invalid or placeholder `OPENROUTER_API_KEY`.
+Check `make health` shows `"configured": true`, confirm the key at
+<https://openrouter.ai/keys>, and make sure the account has credit.
+
+The bridge deliberately turns a failed run into an HTTP error rather than a
+chat message — Agno completes failed runs with the provider's text as content,
+so without this you would see "User not found." as if the agent had said it.
+
 ### Everything is slow on the first message
 
 Cold start: the container builds the agents, connects to Postgres and
