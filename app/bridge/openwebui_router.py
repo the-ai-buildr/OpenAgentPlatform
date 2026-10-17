@@ -31,6 +31,7 @@ from app.bridge.security import require_bridge_auth
 from app.knowledge import knowledge_manager as km
 from app.knowledge.file_watcher import watcher_service
 from app.knowledge.paths import UnsafePathError
+from app.settings import settings
 from app.telemetry.otel import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,14 @@ async def chat_completions(
 
     runner = runner_factory(model)
     if runner is None:
+        if not settings.llm_configured:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "OPENROUTER_API_KEY is not configured, so no agent can run. "
+                    "Set it in .env and restart the API. See /health."
+                ),
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown model {model!r}"
         )

@@ -169,8 +169,12 @@ db-shell: ## Open a psql shell on the database
 db-dump: ## Dump the database to db/backups/<timestamp>.sql
 	@mkdir -p db/backups
 	@out="db/backups/$$(date -u +%Y%m%dT%H%M%SZ).sql"; \
-	$(DEV_COMPOSE) exec -T agentos-db pg_dump -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos) > "$$out" \
-		&& echo "Wrote $$out"
+	tmp="$$out.partial"; \
+	if $(DEV_COMPOSE) exec -T agentos-db pg_dump -U $(or $(DB_USER),ai) -d $(or $(DB_NAME),agentos) > "$$tmp"; then \
+		mv "$$tmp" "$$out"; echo "Wrote $$out ($$(wc -c < "$$out") bytes)"; \
+	else \
+		rm -f "$$tmp"; echo "Dump failed - no file written. Is the database running? (make ps)" >&2; exit 1; \
+	fi
 
 db-restore: ## Restore a dump: make db-restore FILE=db/backups/<file>.sql
 	@test -n "$(FILE)" || { echo "Usage: make db-restore FILE=db/backups/<file>.sql"; exit 1; }

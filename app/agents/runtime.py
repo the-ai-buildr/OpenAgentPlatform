@@ -30,7 +30,8 @@ _db: Any = None
 _on_change: list[Callable[[], None]] = []
 
 
-def _get_db() -> Any:
+def get_db() -> Any:
+    """Shared AgentOS database. Built lazily so importing this module is cheap."""
     global _db
     if _db is None:
         from agno.db.postgres import PostgresDb
@@ -68,7 +69,7 @@ def _folder_knowledge(folder: str | None) -> Any | None:
 def _build_core_agents() -> dict[str, Any]:
     from agno.agent import Agent
 
-    db = _get_db()
+    db = get_db()
     common = {
         "db": db,
         "add_history_to_context": True,
@@ -154,7 +155,7 @@ def _build_dynamic_agents() -> dict[str, Any]:
                 name=spec.name,
                 role=spec.role or None,
                 model=build_model(spec.model_id),
-                db=_get_db(),
+                db=get_db(),
                 tools=agent_tools or None,
                 knowledge=knowledge,
                 search_knowledge=knowledge is not None,
@@ -176,7 +177,7 @@ def _build_team(members: list[Any]) -> Any:
         name="Agno Platform Coordinator",
         members=members,
         model=build_model(settings.agno_manager_model),
-        db=_get_db(),
+        db=get_db(),
         instructions=[
             "Route platform work to the right specialist.",
             "Agent and folder creation goes to Platform Builder.",
@@ -240,7 +241,13 @@ def get_all_agents_list() -> list[Any]:
 
 
 def get_runner(model_id: str | None) -> Any:
-    """Resolve an Open WebUI model id to a team or agent, defaulting to the team."""
+    """Resolve an Open WebUI model id to a team or agent, defaulting to the team.
+
+    Returns None when no runnable exists — including the degraded case where no
+    LLM key is configured, so nothing can be constructed at all.
+    """
+    if not settings.llm_configured:
+        return None
     if not model_id or model_id == TEAM_ID:
         return get_team()
     agents = get_all_agents_dict()
@@ -248,18 +255,24 @@ def get_runner(model_id: str | None) -> Any:
 
 
 def describe_agents() -> list[dict[str, str]]:
-    """Catalogue used by the `/v1/models` bridge endpoint."""
+    """Catalogue used by the `/v1/models` bridge endpoint.
+
+    Empty without an LLM key: advertising models that cannot answer would make
+    Open WebUI show a picker full of options that all fail.
+    """
+    if not settings.llm_configured:
+        return []
     entries = [
         {"id": TEAM_ID, "name": "Agno Platform Coordinator", "kind": "team"},
     ]
-    for agent_id, agent in get_all_agents_dict().items():
-        entries.append(
-            {
-                "id": agent_id,
-                "name": getattr(agent, "name", agent_id) or agent_id,
-                "kind": "agent",
-            }
-        )
+    entries.extend(
+        {
+            "id": agent_id,
+            "name": getattr(agent, "name", agent_id) or agent_id,
+            "kind": "agent",
+        }
+        for agent_id, agent in get_all_agents_dict().items()
+    )
     return entries
 
 

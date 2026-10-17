@@ -60,7 +60,7 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
      ./workspace_files  ──▶ /app/workspace_files   (watched, read-write)
      openwebui_data     ──▶ /app/openwebui_data    (read-only; upload source)
      pgdata             ──▶ agentos-db  postgres 17 + pgvector 0.8.7
-                              public.*   AgentOS sessions, runs, traces
+                              ai.agno_*  AgentOS sessions, runs, metrics, …
                               ai.kb_*    one vector table per workspace folder
 ```
 
@@ -143,6 +143,17 @@ Each hypothesis from the brief, confirmed or rejected, with what was done.
 | 26 | A missing API key crashed the app at import | Required | Without `OPENROUTER_API_KEY` the app serves a degraded FastAPI app: `/health` explains why, `/v1/models` still answers, and the container stays healthy instead of crash-looping. |
 | 27 | `make clean` silently ran `down -v` | Required | Renamed `destroy-volumes`, spells out what is lost, requires typing `destroy`, and explicitly says it is **not** the fix for a password error. |
 
+### Found only by running it
+
+These three were invisible to static review and were caught by booting the
+stack. Each had a passing-looking implementation beforehand.
+
+| # | Finding | Severity | Fix |
+|---|---|---|---|
+| 28 | **Routes added after `AgentOS.get_app()` are unreachable.** AgentOS appends a catch-all `Mount('')` to the app, so the whole `/v1` router 404'd even though it appeared in `/openapi.json`. The custom `/health` was shadowed by AgentOS's own, which returns only `{"status": "ok"}` — the degraded report was never visible. | **Critical** | Register `/health` and the bridge on a `FastAPI` *base app*, then hand it to `AgentOS(base_app=..., on_route_conflict="preserve_base_app")`. This is the documented way to compose AgentOS with your own routes. Confirmed by dumping `app.routes` in the running container. |
+| 29 | **SQLAlchemy was still untraced after the ordering fix.** `opentelemetry-instrumentation-sqlalchemy` declares `sqlalchemy<2.1.0` and, outside that range, logs an error and instruments *nothing*. The pin resolved to SQLAlchemy 2.1.5, so every database query was invisible. Agno sets no upper bound, so this would silently recur on any unpinned rebuild. | Required | Pinned `SQLAlchemy==2.0.55` with the reason in `requirements.txt`. Verified by reading SQL spans out of Phoenix's API. So hypothesis #4 had *two* independent causes; fixing the import order alone would have looked correct and changed nothing. |
+| 30 | **`/v1/models` returned 500 with no LLM key.** Building the catalogue constructed the agents, which constructed a model, which raised. The degraded mode that was supposed to be graceful returned `Internal Server Error`. | Required | `describe_agents()` returns an empty list and `get_runner()` returns `None` when no key is set; `/v1/chat/completions` answers `503` naming the missing variable. Covered by `tests/test_degraded_mode.py`. |
+
 ### Rejected or downgraded
 
 | # | Hypothesis | Verdict |
@@ -192,7 +203,12 @@ and belongs to the deployment rather than to the data. Writes are atomic
 | OpenInference instrumentor works on Agno 3.x | `AgnoInstrumentor().instrument()` against 3.1.4 | Succeeds (it declares `agno>=2.7.2`) |
 | Traversal guard | Reverted the fix to `startswith` and re-ran the suite | `test_rejects_sibling_with_shared_prefix` fails, then passes again |
 | Compose validity | `docker compose config` on dev and prod overlays | Both valid |
-| Degraded boot | Container started with no provider keys | `/health` returns `degraded`, `/v1/models` answers, `/v1` rejects an unauthenticated call with 401 |
+| Full stack boots | `docker compose up` with Postgres, Phoenix and the API | API healthy; `/health` reports `degraded` only for the missing embeddings key |
+| Bridge auth | `GET /v1/models` with and without the key | 401 then 200, team plus three agents |
+| MCP | `GET /mcp` and `/mcp/server-card` | 401 unauthenticated, 200 with the key |
+| Tracing really works | Queried Phoenix's own API for stored spans | SQL spans present with `db.statement` attributes |
+| Watcher | Wrote a file into `workspace_files/sops/` | Debounced event logged ~2 s later with the honest "no embedding key" reason |
+| Degraded boot | Container started with no provider keys and an unreachable database | `/health` → `degraded` listing all three reasons, `/v1/models` → `[]`, `/v1/chat/completions` → 503 naming the variable, 401 still enforced |
 
 See the "Verified running vs statically checked" section of the pull request
 for what was executed end to end on the build machine.

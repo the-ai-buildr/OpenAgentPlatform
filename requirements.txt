@@ -14,7 +14,10 @@ httpx==0.28.1
 openai==3.33.0
 
 # Postgres + pgvector
-SQLAlchemy==2.1.5
+# Held below 2.1 on purpose: opentelemetry-instrumentation-sqlalchemy declares
+# `sqlalchemy<2.1.0` and silently instruments nothing outside that range, which
+# would leave every database query untraced. Agno itself has no upper bound.
+SQLAlchemy==2.0.55
 psycopg[binary]==3.3.6
 pgvector==0.5.1
 
