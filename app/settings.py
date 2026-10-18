@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     oap_manager_model: str = "anthropic/claude-haiku-5.5"
     oap_skills_model: str = "anthropic/claude-sonnet-5.5"
     oap_scheduler_model: str = "anthropic/claude-haiku-5.5"
+    oap_docs_model: str = "anthropic/claude-sonnet-5.5"
     oap_dev_model: str = "anthropic/claude-sonnet-5.5"
     oap_researcher_model: str = "anthropic/claude-sonnet-5.5"
     oap_model_max_tokens: int = 16384

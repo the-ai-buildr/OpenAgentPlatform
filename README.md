@@ -1,5 +1,7 @@
 # OpenAgentPlatform
 
+![OpenAgentPlatform — Open-source, self-hosted agent platform with an OpenAI-compatible API. OAP · Open WebUI · FastAPI /v1 · pgvector · Arize Phoenix](docs/assets/openagentplatform-banner.png)
+
 A self-hosted agent platform: **Open Agent Platform** (FastAPI) behind **Open WebUI**,  
 with per-folder **pgvector** knowledge bases, automatic document indexing, an  
 **OpenAI-compatible bridge**, an **MCP** endpoint, and **OpenTelemetry** traces  
@@ -19,7 +21,7 @@ Open WebUI  →  OAP /v1 bridge      →  agents + team       →  OpenRouter (c
 | | |
 
 |---|---|
-| **Platform group** | `oap` team routing to `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, `platform-skills`, `platform-scheduler` |
+| **Platform group** | `oap` team routing to `platform-builder`, `platform-engineer`, `platform-manager`, `platform-telemetry`, `platform-skills`, `platform-scheduler`, `platform-docs` |
 | **Project group** | `project-dev` (dev team with four reviewers), `project-researcher`, and one team per user project — see [Platform and project groups](#platform-and-project-groups) |
 | **Custom** | Anything in `app/catalog/` or created by the Builder |
 | **Chat models** | Any model on [OpenRouter](https://openrouter.ai/models) |
@@ -41,7 +43,7 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 - [Local development](#local-development)
 - [Running the tests](#running-the-tests)
 - [Connecting Open WebUI](#connecting-open-webui)
-- [File routing and](#file-routing-and-folder-tags) `#folder:` [tags](#file-routing-and-folder-tags)
+- [File routing and `#folder:` tags](#file-routing-and-folder-tags)
 - [Creating your own agents](#creating-your-own-agents)
 - [Platform and project groups](#platform-and-project-groups)
 - [Observability](#observability)
@@ -136,13 +138,17 @@ Defaults:
 OAP_DEFAULT_MODEL=anthropic/claude-sonnet-5.5
 OAP_BUILDER_MODEL=anthropic/claude-sonnet-5.5
 OAP_ENGINEER_MODEL=anthropic/claude-sonnet-5.5
-OAP_MANAGER_MODEL=anthropic/claude-haiku-5.5
+OAP_MANAGER_MODEL=anthropic/claude-haiku-5.5      # also telemetry, oap, project and catalog teams
+OAP_SKILLS_MODEL=anthropic/claude-sonnet-5.5
+OAP_SCHEDULER_MODEL=anthropic/claude-haiku-5.5
+OAP_DEV_MODEL=anthropic/claude-sonnet-5.5         # project-dev and its four reviewers
+OAP_RESEARCHER_MODEL=anthropic/claude-sonnet-5.5
 ```
 
 To check an id is live:
 
 ```bash
-curl -s https://openrouter.ai/api/v1/models | grep -o '"id":"anthropic/claude-sonnet-4.5"'
+curl -s https://openrouter.ai/api/v1/models | grep -o '"id":"anthropic/claude-sonnet-5.5"'
 ```
 
 ### Chat and embeddings
@@ -212,9 +218,12 @@ make config          # render the dev compose config
 
 ## Running the tests
 
-The suite covers the pure logic — path containment, table naming, the agent
-registry, and the bridge's auth and OpenAI-shaped responses. It needs no
-Docker, no database and no API keys.
+The suite covers path containment, table naming, the agent and project
+registry, document list/grep/read, the bridge's auth and OpenAI-shaped
+responses, the Open WebUI model sync, skills, schedules, the research
+toolkits, approval pauses and background runs. Agents are built against an
+in-memory database and never call a model, so it needs no Docker, no
+Postgres and no API keys.
 
 ```bash
 make venv            # one-off: .venv with requirements-dev.txt
@@ -261,13 +270,20 @@ one place.
 6. Start a new chat. The model picker now lists:
    | Model | What it is |
      |---|---|
-     | `OAP/Platform Coordinator` | the `oap` team — routes to a specialist |
-     | `OAP/Platform Builder` | creates agents and knowledge folders |
+     | `OAP/Platform Coordinator` | the `oap` team — routes to a platform specialist |
+     | `OAP/Platform Builder` | creates agents, projects and knowledge folders |
      | `OAP/Platform Engineer` | explains this codebase |
-     | `OAP/Platform Manager` | health, routing, re-indexing |
-     | `OAP/<your agent>` | anything you create |
+     | `OAP/Platform Manager` | health, routing, re-indexing, background runs |
+     | `OAP/Platform Telemetry` | reads Phoenix traces and spans |
+     | `OAP/Platform Skills` | lists, recommends, writes and syncs agent skills |
+     | `OAP/Platform Scheduler` | cron schedules and their run history |
+     | `OAP/Platform Docs` | lists, greps, reads and searches workspace documents |
+     | `OAP/Project Dev` | plans, builds and reviews code with four reviewers |
+     | `OAP/Project Researcher` | web, news and arXiv research with cited reports |
+     | `OAP/<your project or agent>` | anything you create |
 
-Start with the Coordinator unless you know which specialist you want.
+Start with the Coordinator for platform work, and Project Dev or Project
+Researcher for project work.
 
 ### Option B — a plain OpenAI connection
 
@@ -284,6 +300,29 @@ as a **Filter** to route them. Set its `api_key` valve to `OS_SECURITY_KEY`.
 > time. Staging is idempotent — a byte-identical file is not re-copied or
 > re-embedded — so nothing breaks, but you pay for the work twice.
 
+### Workspace Models
+
+OAP also registers its models under Open WebUI's **Workspace → Models**, with
+display names, descriptions and tags, readable by every user:
+
+- Each agent, team and workflow gets a visible model `agent.<id>` (for example
+  `agent.oap` or `agent.project-dev`), tagged `OAP`, its kind (`agent`, `team`
+  or `workflow`) and its group (`platform`, `project` or `custom`).
+- The plain `<id>` from the connection is kept but hidden, so the picker shows
+  each model once.
+- An `agent.<id>` model whose agent no longer exists is deleted.
+- If Open WebUI's default model is empty or still `oap`, it becomes `agent.oap`.
+
+The sync runs at startup (retrying while Open WebUI boots), after every agent
+or project change, and on `GET /v1/models` until one sync has succeeded. Ask
+Platform Builder to sync Open WebUI models to run it by hand.
+
+It calls Open WebUI's admin API at `OPENWEBUI_BASE_URL`. With
+`OPENWEBUI_API_KEY` empty, it signs a short-lived token for the first admin
+account using `WEBUI_SECRET_KEY`, so nothing happens until that account
+exists. `OPENWEBUI_AUTO_SYNC=false` stops the automatic syncs; Platform
+Builder still syncs after it creates or deletes an agent or project.
+
 ---
 
 ## File routing and `#folder:` tags
@@ -293,10 +332,14 @@ its own pgvector table named `kb_<slug>`:
 
 ```
 workspace_files/
-├── general/            → ai.kb_general
-├── sops/               → ai.kb_sops
-├── contracts/          → ai.kb_contracts
-└── agents/research/    → ai.kb_agents_research
+├── general/               → ai.kb_general
+├── sops/                  → ai.kb_sops
+├── contracts/             → ai.kb_contracts
+├── research/              → ai.kb_research          (standalone project-researcher)
+├── skills/                runtime skill overrides (not a knowledge table)
+├── projects/<id>/         → ai.kb_projects_<id>
+├── agents/<id>/           → ai.kb_agents_<id>
+└── users/<user>/<folder>/ → ai.kb_users_<user>_<folder>
 ```
 
 ### Three ways in
@@ -425,7 +468,7 @@ The registry is a plain file you can edit and commit:
       "name": "Research Analyst",
       "role": "Summarises market research",
       "instructions": "Cite the source document for every claim.",
-      "model_id": "anthropic/claude-sonnet-4.5",
+      "model_id": "anthropic/claude-sonnet-5.5",
       "knowledge_folder": "research",
       "enable_web_search": true
     }
@@ -434,7 +477,9 @@ The registry is a plain file you can edit and commit:
 ```
 
 `oap`, every `platform-*` id, `project-dev`, `project-researcher` and the
-`dev-*` subagent ids are reserved and cannot be overwritten.
+`dev-*` subagent ids are reserved and cannot be overwritten. A custom agent
+and a project cannot share an id: the Builder refuses, and a clashing catalog
+file is skipped with a warning in the API log.
 
 ---
 
@@ -444,7 +489,9 @@ Every model in `/v1/models` carries a `group`, and Open WebUI tags it with
 the same name.
 
 **Platform** (`oap` and `platform-`*) runs the deployment. The `oap` team
-routes to its six members:
+routes to these agents, each of which you can also pick on its own. `oap`
+holds its own copies of them, so a direct run of a `platform-*` agent is
+not recorded as a team member.
 
 | Agent | Does |
 |---|---|
@@ -454,6 +501,7 @@ routes to its six members:
 | `platform-telemetry` | Reads Phoenix traces and spans |
 | `platform-skills` | Lists, validates, recommends, writes and git-syncs skills; attaches them to agents |
 | `platform-scheduler` | Cron schedules for any agent or team endpoint, with run history |
+| `platform-docs` | Lists, greps, reads and searches documents in `workspace_files/`; pulls an `llms.txt` or Markdown URL into a folder |
 
 **Project** is for the work itself. None of it sits under `oap`; pick it in
 the model list or add it to a project.
@@ -462,8 +510,9 @@ the model list or add it to a project.
 to `dev-code-reviewer`, `dev-test-engineer`, `dev-security-auditor` and
 `dev-perf-auditor`, each loaded with the matching skills.
 - `project-researcher` searches the web, news and arXiv, reads full articles
-and pages, and saves cited reports to `workspace_files/research/`.
-AgentQL joins its toolkits when `AGENTQL_API_KEY` is set.
+and pages, inspects the bound knowledge folder, and saves cited reports to
+`workspace_files/research/` (or the project's folder). AgentQL joins its
+toolkits when `AGENTQL_API_KEY` is set.
 - A **project** is a team with its own knowledge folder
 (`workspace_files/projects/<id>/`). Its members default to `project-dev`
 and `project-researcher`, and may include custom agents. Each project gets
@@ -489,17 +538,42 @@ skills and OAP's `human-in-the-loop` skill live in `app/skills/`. Skills
 written or synced at runtime go to `workspace_files/skills/` and override a
 bundled skill with the same name. Give a custom agent skills with
 `"skills": ["test-driven-development"]` (or `["*"]` for all) in its spec.
+Ask `platform-skills` to recommend skills for a task, or to clone
+`addyosmani/agent-skills` into the workspace.
+
+**Documents.** `platform-docs` (and `project-researcher`, plus any custom
+agent) can list, grep and read files in a knowledge folder even when
+embeddings are off. Hybrid search needs `EMBEDDING_API_KEY`.
+`#folder:docs/api` still routes uploads; ask Platform Docs to read what
+landed there.
 
 **Confirmation before destructive actions.** Deleting an agent, project,
-schedule or custom skill pauses the run. Reply `approve` (or `yes`) to go
-ahead, or `reject` (or `no`) to cancel; `POST /v1/runs/{run_id}/resolve` does
-the same from code.
+schedule or custom skill pauses the run, and the reply shows the tool, its
+arguments and the `run_id`. Answer in the same chat: `approve`, `yes` or
+`confirm` goes ahead; `reject`, `no` or `cancel` stops it, and your message
+is passed to the agent as the reason. From code:
 
-**Background runs.** Start a message with `#background`, or send
-`"background": true`, and the bridge returns a `run_id` at once. Poll
-`GET /v1/runs/{run_id}`, cancel with `POST /v1/runs/{run_id}/cancel`, or ask
-`platform-manager` for the status. Accepted runs are queued in Postgres and
-survive a restart.
+```bash
+curl -X POST http://localhost:8000/v1/runs/<run_id>/resolve \
+  -H "Authorization: Bearer $OS_SECURITY_KEY" -H 'Content-Type: application/json' \
+  -d '{"model": "platform-builder", "session_id": "<session_id>", "decision": "confirm"}'
+```
+
+`decision` is `confirm` or `reject` (with an optional `note`). A run that is
+not paused answers `409`.
+
+**Background runs.** Add `#background` to a message, or send
+`"background": true`, and the run is saved as pending and runs inside the API
+process, at most `BACKGROUND_MAX_CONCURRENCY` at a time.
+
+- A non-streaming request returns the `run_id` and `session_id` at once. Poll
+  `GET /v1/runs/{run_id}?model=<id>&session_id=<session_id>`, cancel with
+  `POST /v1/runs/{run_id}/cancel?model=<id>`, or ask `platform-manager`.
+- Open WebUI streams, so there you still watch the answer arrive, but the run
+  carries on and saves its result if you close the tab.
+- These runs do not survive an API restart. Background runs sent to AgentOS's
+  own `POST /agents/{id}/runs` or `/teams/{id}/runs` go through the durable
+  Postgres queue (`ENABLE_BACKGROUND_QUEUE`) and do.
 
 ---
 
@@ -708,7 +782,8 @@ Every variable is documented inline in
 | Variable                   | Default                       | Notes                                                                             |
 | -------------------------- | ----------------------------- | --------------------------------------------------------------------------------- |
 | `OPENROUTER_API_KEY`       | —                             | Required. Without it the API runs degraded.                                       |
-| `OAP_DEFAULT_MODEL`       | `anthropic/claude-sonnet-4.5` | Must exist in the OpenRouter catalogue                                            |
+| `OAP_DEFAULT_MODEL`       | `anthropic/claude-sonnet-5.5` | Must exist in the OpenRouter catalogue                                            |
+| `OAP_DOCS_MODEL`          | `anthropic/claude-sonnet-5.5` | Model for `platform-docs`                                                         |
 | `EMBEDDING_API_KEY`        | —                             | Optional. Empty reuses `OPENROUTER_API_KEY` only when the base URL is OpenRouter. |
 | `EMBEDDING_BASE_URL`       | `https://api.openai.com/v1`   | Set to `https://openrouter.ai/api/v1` to embed through OpenRouter                 |
 | `WEBUI_NAME`               | `Open Agent Platform`         | Open WebUI appends `(Open WebUI)` in the sidebar                                  |
@@ -719,13 +794,15 @@ Every variable is documented inline in
 | `MAX_STAGED_UPLOAD_BYTES`  | `67108864`                    | 64 MB cap on staged uploads                                                       |
 | `OTEL_ENABLED`             | `true`                        | Tracing master switch                                                             |
 | `ENABLE_MCP_SERVER`        | `true`                        | Serve `/mcp`                                                                      |
-| `OAP_SKILLS_MODEL`, `OAP_SCHEDULER_MODEL`, `OAP_DEV_MODEL`, `OAP_RESEARCHER_MODEL` | see `.env.example` | Models for `platform-skills`, `platform-scheduler`, `project-dev` and `project-researcher` |
+| `OAP_SKILLS_MODEL`, `OAP_SCHEDULER_MODEL`, `OAP_DEV_MODEL`, `OAP_RESEARCHER_MODEL` | see `.env.example` | Models for `platform-skills`, `platform-scheduler`, `project-dev` and `project-researcher`. Manager and scheduler default to `anthropic/claude-haiku-5.5` |
 | `AGENTQL_API_KEY`          | —                             | Optional. Adds AgentQL to `project-researcher`                                    |
 | `ENABLE_SCHEDULER`         | `true`                        | Run due cron schedules                                                            |
 | `SCHEDULER_POLL_INTERVAL`  | `15`                          | Seconds between schedule checks                                                   |
-| `ENABLE_BACKGROUND_QUEUE`  | `true`                        | Queue background runs in Postgres so they survive restarts                        |
+| `ENABLE_BACKGROUND_QUEUE`  | `true`                        | Durable Postgres queue for background runs sent to AgentOS's `/agents` and `/teams` endpoints |
 | `BACKGROUND_MAX_CONCURRENCY` | `16`                        | Background runs executing at once                                                 |
 | `STORE_RUN_EVENTS`         | `true`                        | Persist run events so background runs can be replayed                             |
+| `OPENWEBUI_AUTO_SYNC`      | `true`                        | Register models under Open WebUI's Workspace → Models automatically               |
+| `OPENWEBUI_API_KEY`        | —                             | Optional Open WebUI admin key; empty signs a token with `WEBUI_SECRET_KEY`        |
 | `DB_PASS`                  | generated                     | Baked into the volume on first start                                              |
 | `WEBUI_SECRET_KEY`         | generated                     | Open WebUI session signing                                                        |
 | `PUBLIC_BASE_URL`          | —                             | Required by `make prod-up`                                                        |
@@ -750,7 +827,7 @@ make health
 | Reason | Fix |
 |---|---|
 | `OPENROUTER_API_KEY is not set` | Add it to `.env`, `make restart` |
-| `EMBEDDING_API_KEY is not set` | Add an OpenAI key, or accept no document knowledge |
+| `EMBEDDING_API_KEY is not set` | Add an OpenAI key, or accept no hybrid search (list/grep/read still work) |
 | `database unreachable: ...` | `make logs-db`; usually the container is still starting |
 
 ### Password authentication failed for user "ai"
@@ -784,6 +861,19 @@ If you cannot authenticate at all, start the container once with
 3. 401 in the logs means the Pipe's `api_key` valve does not match
 
    `OS_SECURITY_KEY`.
+
+### Models are missing from Workspace → Models
+
+The [model sync](#workspace-models) needs an Open WebUI admin account and the
+same `WEBUI_SECRET_KEY` that Open WebUI uses (compose passes the `.env` value
+to both). Create the admin account, then ask Platform Builder to sync Open
+WebUI models. Its answer includes the reason when the sync is skipped.
+
+### A chat is waiting for approval
+
+A delete was requested and the run is paused. Reply `approve` or `reject` in
+the same chat. `GET /v1/runs/<run_id>?model=<id>&session_id=<session_id>`
+shows `is_paused` and the pending tool calls.
 
 ### Uploaded files are not indexed
 
@@ -856,15 +946,15 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 │   ├── skills_manager.py        Loads bundled and workspace skills
 │   ├── telemetry/otel.py        Tracer provider and library instrumentation
 │   ├── knowledge/
-│   │   ├── paths.py             Path containment and table naming (pure)
-│   │   ├── knowledge_manager.py Per-folder pgvector knowledge bases
+│   │   ├── paths.py             Path containment, table naming, user/project folder keys
+│   │   ├── knowledge_manager.py Per-folder pgvector bases plus list/grep/read/sync
 │   │   └── file_watcher.py      Debounced auto-indexer
 │   ├── agents/
 │   │   ├── store.py             registry.json CRUD and folder rules (pure)
 │   │   ├── runtime.py           Builds the platform and project groups, catalog teams and workflows
 │   │   └── registry.json        Custom agents and projects, including ones synced from the catalog
 │   ├── tools/
-│   │   ├── platform_tools.py    Tools the platform agents call
+│   │   ├── platform_tools.py    Registry, workspace, health and document tools
 │   │   ├── skill_tools.py       Skill listing, authoring and git sync for platform-skills
 │   │   ├── scheduler_tools.py   Cron schedule management for platform-scheduler
 │   │   ├── research_tools.py    Web, news, arXiv and page readers for project-researcher
@@ -872,9 +962,10 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 │   └── bridge/
 │       ├── security.py          Bearer auth for /v1
 │       ├── schemas.py           Request/response models
-│       └── openwebui_router.py  The OpenAI-compatible bridge
+│       ├── openwebui_router.py  The OpenAI-compatible bridge, approvals and background runs
+│       └── openwebui_sync.py    Registers models under Open WebUI's Workspace → Models
 ├── openwebui_functions/         Pipe and Filter to paste into Open WebUI
-├── workspace_files/             Documents, one folder per topic
+├── workspace_files/             Documents (`general/`, `projects/`, `agents/`, `research/`, `skills/`)
 ├── db/                          pgvector image and first-run SQL
 ├── tests/                       pytest suite
 ├── docs/ARCHITECTURE.md         Design and the review of the original stack

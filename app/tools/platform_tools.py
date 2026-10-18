@@ -143,6 +143,75 @@ def inspect_file_watcher_status() -> dict[str, Any]:
     return {"status": "ok", **watcher_service.status()}
 
 
+def list_docs_pages(folder: str | None = None) -> dict[str, Any]:
+    """List documents and published pages in a workspace knowledge folder (or all folders)."""
+    try:
+        return {"status": "ok", **km.list_folder_documents(folder)}
+    except (UnsafePathError, ValueError, OSError) as exc:
+        return _error(exc)
+
+
+def read_doc_page(
+    folder: str, filename: str, offset: int = 0, max_chars: int = 12000
+) -> dict[str, Any]:
+    """Read a document or page from `workspace_files/<folder>/<filename>` with pagination."""
+    try:
+        return {
+            "status": "ok",
+            **km.read_folder_document(folder, filename, offset=offset, max_chars=max_chars),
+        }
+    except (FileNotFoundError, UnsafePathError, ValueError, OSError) as exc:
+        return _error(exc)
+
+
+def grep_docs_pages(
+    query: str,
+    folder: str | None = None,
+    ignore_case: bool = True,
+    limit: int = 30,
+) -> dict[str, Any]:
+    """Search literal or regex matches across documents in a workspace folder (or all folders)."""
+    try:
+        return {
+            "status": "ok",
+            **km.grep_folder_documents(query, folder=folder, ignore_case=ignore_case, limit=limit),
+        }
+    except (UnsafePathError, ValueError, OSError) as exc:
+        return _error(exc)
+
+
+def search_docs_knowledge(
+    query: str, folder: str | None = None, limit: int = 8
+) -> dict[str, Any]:
+    """Search a knowledge folder (or all folders) with hybrid vector search and grep fallback."""
+    try:
+        return {"status": "ok", **km.search_folder_knowledge(query, folder=folder, limit=limit)}
+    except (UnsafePathError, ValueError, OSError) as exc:
+        return _error(exc)
+
+
+def sync_external_docs_url(
+    folder: str, url: str, reindex: bool = False
+) -> dict[str, Any]:
+    """Fetch an `llms.txt` index or Markdown documentation URL into `workspace_files/<folder>/` and sync it."""
+    try:
+        report = km.sync_external_docs(folder, url, reindex=reindex)
+        sync_fn = getattr(openwebui_sync, "sync_knowledge_with_openwebui", None)
+        if callable(sync_fn):
+            report["openwebui_knowledge_sync"] = sync_fn()
+        return report
+    except Exception as exc:
+        return _error(exc)
+
+
+def sync_openwebui_knowledge() -> dict[str, Any]:
+    """Synchronize folders and files between `workspace_files/`, Postgres, and Open WebUI Knowledge & Folders."""
+    sync_fn = getattr(openwebui_sync, "sync_knowledge_with_openwebui", None)
+    if callable(sync_fn):
+        return sync_fn()
+    return {"status": "skipped", "reason": "knowledge sync not initialized"}
+
+
 # --------------------------------------------------------------------------- #
 # Agent registry
 # --------------------------------------------------------------------------- #
@@ -448,6 +517,19 @@ WORKSPACE_TOOLS = [
     route_openwebui_upload_to_folder,
     sync_folder_to_pgvector,
     inspect_file_watcher_status,
+]
+
+DOCS_READ_TOOLS = [
+    search_docs_knowledge,
+    list_docs_pages,
+    grep_docs_pages,
+    read_doc_page,
+]
+
+DOCS_TOOLS = [
+    *DOCS_READ_TOOLS,
+    sync_external_docs_url,
+    sync_openwebui_knowledge,
 ]
 
 REGISTRY_TOOLS = [

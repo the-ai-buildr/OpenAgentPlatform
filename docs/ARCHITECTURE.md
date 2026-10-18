@@ -42,7 +42,8 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
                            │   │                                      │   │
                            │   │  platform: oap team ─▶ platform-*    │   │
                            │   │    builder, engineer, manager,       │   │
-                           │   │    telemetry, skills, scheduler      │   │
+                           │   │    telemetry, skills, scheduler,     │   │
+                           │   │    docs                              │   │
                            │   │  project:  project-dev (team + 4)    │   │
                            │   │            project-researcher        │   │
                            │   │            user project teams        │   │
@@ -75,14 +76,19 @@ it. Everything the API does is traced to a Phoenix container over OTLP.
 
 1. Open WebUI posts `/v1/chat/completions` with the bearer key.
 2. `require_bridge_auth` compares it to `OS_SECURITY_KEY` in constant time.
-3. The bridge takes the last user message, pulls out any `#folder:<path>` tag,
-   and stages attached uploads into the resolved folder (idempotent — a
-   byte-identical file already in place is not re-copied or re-embedded).
+3. The bridge takes the last user message, pulls out any `#folder:<path>` and
+   `#background` tags, and stages attached uploads into the resolved folder
+   (idempotent — a byte-identical file already in place is not re-copied or
+   re-embedded).
 4. The model id resolves, in order, to the `oap` team, a platform or custom
    agent, `project-dev` / `project-researcher`, a user project, a catalog team
    or workflow, or a published Studio agent, falling back to `oap`.
-5. `arun(...)` streams `RunContentEvent`s, which are re-encoded as OpenAI SSE
-   chunks terminated by `data: [DONE]`.
+5. If the session's last run is paused for confirmation and the message is an
+   approve or reject reply, the bridge resolves that run and continues it
+   instead of starting a new one.
+6. `arun(...)` streams `RunContentEvent`s, which are re-encoded as OpenAI SSE
+   chunks terminated by `data: [DONE]`. A paused run ends the stream with the
+   pending tool calls and its `run_id`.
 
 ### Dependency direction
 
@@ -98,7 +104,8 @@ modules are now layered so imports only ever point downwards:
      │                          │                              │
   agents/store ◀──────── tools/platform_tools ──────────────────┘
      ▲                 ▲        tools/phoenix_tools, skill_tools,
-     │                 │        scheduler_tools, research_tools
+     │                 │        scheduler_tools, research_tools,
+     │                 │        skills_manager
      │                 │                ▲
   catalog_loader ──────┴──── agents/runtime ──────┘
                                    ▲
@@ -113,6 +120,12 @@ modules are now layered so imports only ever point downwards:
 triggers an agent rebuild through a callback rather than an upward import.
 The same inversion keeps `tools/scheduler_tools` free of `runtime`:
 `runtime.initialize()` hands it the shared database with `set_db_provider`.
+`skills_manager` imports only `settings`; `tools/skill_tools` and `runtime`
+import it.
+
+`bridge/openwebui_sync` is the one exception. `tools/platform_tools` imports
+it, and it reads the model catalogue from `runtime` with a function-local
+import, so that edge points upwards.
 
 ---
 
@@ -241,11 +254,21 @@ Starlette's `allow_private_network` after AgentOS installs CORS. `make
 oap` starts the API, Postgres and Phoenix without Open WebUI.
 
 **Two groups.** `describe_agents()` tags every code-defined model with a
-`group`, which Open WebUI shows as a tag. `platform` is `oap` and its six
-`platform-*` members (`platform-skills` and `platform-scheduler` included).
-`project` is `project-dev`, `project-researcher` and every user project; none
-of them are members of `oap`, which points development and research requests
-at them instead. Custom agents, catalog teams and workflows are `custom`.
+`group`, which Open WebUI shows as a tag. `platform` is `oap` and its seven
+`platform-*` members (`platform-skills`, `platform-scheduler` and
+`platform-docs` included). `project` is `project-dev`, `project-researcher`
+and every user project; none of them are members of `oap`, which points
+development and research requests at them instead. Custom agents, catalog
+teams and workflows are `custom`.
+
+**`platform-docs` reads the workspace as documents, not only as chunks.**
+`list_docs_pages`, `grep_docs_pages` and `read_doc_page` walk
+`workspace_files/` even when embeddings are off. `search_docs_knowledge`
+uses hybrid pgvector search when a key is set, otherwise grep.
+`sync_external_docs_url` fetches an `llms.txt` index or a Markdown URL into
+a folder. User-scoped keys are `users/<slug>/<folder>`
+(`paths.user_folder_key`). `project-researcher` and custom agents get the
+read tools; mutating sync stays on Platform Docs.
 
 **A team member belongs to exactly one team.** Agno's `Team` binds each
 member to itself when it initialises (`team_id`, `parent_team_id`, its result
@@ -283,8 +306,17 @@ database, and `store_events` on the platform and project groups lets a client
 replay a run's events. `/health` reports both under `scheduler` and
 `background`.
 
-**Reserved ids** are `oap`, every `platform-*` id, `project-dev`,
-`project-researcher` and the four `dev-*` subagent ids.
+**Reserved ids** are `oap`, every `platform-*` id (including
+`platform-docs`), `project-dev`, `project-researcher` and the four `dev-*`
+subagent ids.
+
+**Current defaults.** Chat models default to
+`anthropic/claude-sonnet-5.5`, except manager and scheduler which use
+`anthropic/claude-haiku-5.5`. `OAP_MODEL_MAX_TOKENS` is 16384. The test
+suite is 529 tests; finding 25's "148 tests" is the count at the original
+review. Finding 12's `claude-sonnet-4.5` / `gpt-4o-mini` defaults are
+superseded. `/health` reports `scheduler` and `background` as well as the
+`/v1/runs/{id}` poll, cancel and resolve endpoints.
 
 ---
 
@@ -300,11 +332,11 @@ replay a run's events. `/health` reports both under `scheduler` and
 | Traversal guard | Reverted the fix to `startswith` and re-ran the suite | `test_rejects_sibling_with_shared_prefix` fails, then passes again |
 | Compose validity | `docker compose config` on dev and prod overlays | Both valid |
 | Full stack boots | `docker compose up` with Postgres, Phoenix and the API | API healthy; `/health` reports `degraded` only for the missing embeddings key |
-| Bridge auth | `GET /v1/models` with and without the key | 401 then 200, team plus three agents |
+| Bridge auth | `GET /v1/models` with and without the key | 401 then 200. At review: team plus three agents. Now: platform group, project group and custom |
 | MCP | `GET /mcp` and `/mcp/server-card` | 401 unauthenticated, 200 with the key |
 | Tracing really works | Queried Phoenix's own API for stored spans | SQL spans present with `db.statement` attributes |
 | Watcher | Wrote a file into `workspace_files/sops/` | Debounced event logged ~2 s later with the honest "no embedding key" reason |
-| Open WebUI integration | Ran Open WebUI v0.12.3 against the bridge as an OpenAI connection | Its `/api/models` lists all four agents with the right display names |
+| Open WebUI integration | Ran Open WebUI v0.12.3 against the bridge as an OpenAI connection | `/api/models` lists the advertised agents with the right display names |
 | Provider errors surface | Chat with a deliberately invalid OpenRouter key | `502 Agent run failed: User not found.`, and `[oap error] …` in the stream |
 | Degraded boot | Container started with no provider keys and an unreachable database | `/health` → `degraded` listing all three reasons, `/v1/models` → `[]`, `/v1/chat/completions` → 503 naming the variable, 401 still enforced |
 

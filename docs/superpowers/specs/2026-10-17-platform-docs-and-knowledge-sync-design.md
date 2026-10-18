@@ -14,7 +14,9 @@ In the current Open Agent Platform (OAP) architecture:
 
 **Goal:**
 1. Keep **Disk (`workspace_files/`) ↔ Postgres DB (`PgVector` + `FileSystem`/`page_store`) ↔ Open WebUI (`Workspace → Knowledge` & User Folders)** automatically in sync based on **user and directory path**, for any file, document, or reference knowledge folder.
-2. Add a core **`Platform Docs`** specialist agent (`id="platform-docs"`, synced to Open WebUI as `agent.platform-docs`) and reusable document/page tools (`DOCS_TOOLS`) so any knowledge folder or external `llms.txt` / Markdown reference source can be searched, grepped, read in full, and synchronized automatically.
+2. Add a core **`Platform Docs`** specialist agent (`id="platform-docs"`, synced to Open WebUI as `agent.platform-docs`) and reusable document/page tools (`DOCS_TOOLS`) so **any** knowledge folder — contracts, SOPs, project notes, user uploads, product manuals, vendor PDFs, or an external `llms.txt` / Markdown site — can be searched, grepped, read in full, and synchronized automatically.
+
+Agno's page-storage API is only the **publish mechanism** (text + catalog + vectors in one transaction). It is **not** the content source. Nothing in this design is limited to `docs.agno.com` or Agno documentation.
 
 ---
 
@@ -79,8 +81,10 @@ Enhance `knowledge_manager.py` so every folder has both vector search and struct
    - `grep_folder_documents(query: str, folder: str | None = None, ignore_case: bool = True, limit: int = 30) -> dict[str, Any]`: Searches literal or regex matches across files in `workspace_files/<folder>` (or all folders) and returns matching file paths, line numbers, and snippets.
    - `search_folder_knowledge(query: str, folder: str | None = None, limit: int = 8) -> dict[str, Any]`: Runs hybrid search against `get_or_create_folder_knowledge(folder)` (or across known folders) and returns ranked chunks with source file and folder metadata.
    - `sync_external_docs(folder: str, url: str, reindex: bool = False) -> dict[str, Any]`:
-     - If `url` points to an `llms.txt` index (or domain with `/llms.txt`), fetches discovered Markdown pages (using `Knowledge.sync_pages` when `agno[pages]` is active, or an HTTP `llms.txt` / Markdown fetcher that writes each page into `workspace_files/<folder>/` and indexes it into PgVector + `FileSystem`).
+     - Works for **any** documentation site or file URL, not Agno docs. Examples: a vendor `llms.txt`, a company handbook Markdown tree, a single runbook `.md` / `.txt`.
+     - If `url` points to an `llms.txt` index (or a domain with `/llms.txt`), fetches discovered Markdown pages (using `Knowledge.sync_pages` when `agno[pages]` is active, or an HTTP fetcher that writes each page into `workspace_files/<folder>/` and indexes it into PgVector + `FileSystem`).
      - If `url` points to a single `.md` / `.txt` / documentation URL, fetches and saves it into `workspace_files/<folder>/` and indexes it.
+     - Local files already in that folder (`.pdf`, `.docx`, `.csv`, `.json`, `.txt`, `.md`) stay the source of truth and are indexed the same way. External sync is an extra ingest path, not a replacement.
 
 ### 3.2 Two-Way Open WebUI Knowledge & Folder Reconciler (`app/bridge/openwebui_sync.py`)
 Extend `openwebui_sync.py` with `sync_knowledge_with_openwebui()`:

@@ -366,3 +366,143 @@ class TestPlatformToolsIntegration:
         deleted = platform_tools.delete_project("acme")
         assert deleted["status"] == "ok"
         assert deleted["openwebui_sync"]["status"] == "ok"
+
+
+class TestSyncKnowledgeWithOpenWebUI:
+    def test_pulls_openwebui_knowledge_dirs_and_user_folders_to_workspace_and_pushes_local_files(
+        self, tmp_path: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.bridge.openwebui_sync import sync_knowledge_with_openwebui
+        from app.knowledge import knowledge_manager as km
+
+        uploads_dir = tmp_path / "uploads"
+        uploads_dir.mkdir()
+        monkeypatch.setattr(km, "OPENWEBUI_UPLOADS_DIR", uploads_dir)
+
+        # Create two uploaded files in Open WebUI's uploads dir
+        nda_upload = uploads_dir / "11111111-1111-1111-1111-111111111111_acme_nda.txt"
+        nda_upload.write_text("Confidential NDA terms.", encoding="utf-8")
+
+        user_note_upload = uploads_dir / "22222222-2222-2222-2222-222222222222_notes.md"
+        user_note_upload.write_text("# Alice Personal Notes\n", encoding="utf-8")
+
+        # Also create a local file on disk in workspace_files/sops/onboarding.md to push to Open WebUI
+        km.save_text_file("sops", "onboarding.md", "# Onboarding SOP\nWelcome!", auto_index=False)
+
+        # Build webui.db with user, auth, knowledge, knowledge_directory, knowledge_file, file, and folder tables
+        db_path = tmp_path / "webui.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, role TEXT, created_at INTEGER)"
+        )
+        conn.execute("CREATE TABLE auth (id TEXT PRIMARY KEY, active INTEGER, session_stamp TEXT)")
+        conn.execute(
+            "CREATE TABLE knowledge (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, description TEXT, meta TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE knowledge_directory (id TEXT PRIMARY KEY, knowledge_id TEXT, parent_id TEXT, name TEXT, user_id TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE knowledge_file (id TEXT PRIMARY KEY, knowledge_id TEXT, file_id TEXT, directory_id TEXT, user_id TEXT)"
+        )
+        conn.execute("CREATE TABLE file (id TEXT PRIMARY KEY, user_id TEXT, filename TEXT, path TEXT, meta TEXT)")
+        conn.execute(
+            "CREATE TABLE folder (id TEXT PRIMARY KEY, parent_id TEXT, user_id TEXT, name TEXT, items TEXT, data TEXT)"
+        )
+
+        conn.execute(
+            "INSERT INTO user VALUES (?, ?, ?, ?, ?)",
+            ("admin-123", "Admin", "admin@example.com", "admin", 1700000000),
+        )
+        conn.execute("INSERT INTO auth VALUES (?, ?, ?)", ("admin-123", 1, "stamp-abc"))
+        conn.execute(
+            "INSERT INTO user VALUES (?, ?, ?, ?, ?)",
+            ("user-alice", "Alice", "alice@example.com", "user", 1700000001),
+        )
+
+        # Admin Knowledge Base "Contracts" with subdirectory "NDAs" and file "acme_nda.txt"
+        conn.execute(
+            "INSERT INTO knowledge VALUES (?, ?, ?, ?, ?)",
+            ("kb-contracts", "admin-123", "Contracts", "Company contracts", "{}"),
+        )
+        conn.execute(
+            "INSERT INTO knowledge_directory VALUES (?, ?, ?, ?, ?)",
+            ("dir-ndas", "kb-contracts", None, "NDAs", "admin-123"),
+        )
+        conn.execute(
+            "INSERT INTO file VALUES (?, ?, ?, ?, ?)",
+            ("file-nda", "admin-123", "acme_nda.txt", str(nda_upload), "{}"),
+        )
+        conn.execute(
+            "INSERT INTO knowledge_file VALUES (?, ?, ?, ?, ?)",
+            ("kf-1", "kb-contracts", "file-nda", "dir-ndas", "admin-123"),
+        )
+
+        # User Alice's chat folder "Research Notes" referencing file-notes in data.files
+        conn.execute(
+            "INSERT INTO file VALUES (?, ?, ?, ?, ?)",
+            ("file-notes", "user-alice", "notes.md", str(user_note_upload), "{}"),
+        )
+        conn.execute(
+            "INSERT INTO folder VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "folder-alice-1",
+                None,
+                "user-alice",
+                "Research Notes",
+                "{}",
+                json.dumps({"files": [{"type": "file", "id": "file-notes", "name": "notes.md"}]}),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        created_kbs: list[dict[str, Any]] = []
+        uploaded_files: list[str] = []
+        added_kb_files: list[tuple[str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path == "/api/v1/knowledge/" and request.method == "GET":
+                return httpx.Response(200, json={"items": created_kbs, "total": len(created_kbs)})
+            if path == "/api/v1/knowledge/create" and request.method == "POST":
+                payload = json.loads(request.content.decode("utf-8"))
+                kb_obj = {"id": f"kb-{len(created_kbs) + 1}", **payload, "files": []}
+                created_kbs.append(kb_obj)
+                return httpx.Response(200, json=kb_obj)
+            if path == "/api/v1/files/" and request.method == "POST":
+                file_id = f"uploaded-{len(uploaded_files) + 1}"
+                uploaded_files.append(file_id)
+                return httpx.Response(200, json={"id": file_id, "filename": "onboarding.md"})
+            if path.endswith("/file/add") and request.method == "POST":
+                kb_id = path.split("/")[4]
+                payload = json.loads(request.content.decode("utf-8"))
+                added_kb_files.append((kb_id, payload["file_id"]))
+                return httpx.Response(200, json={"id": kb_id})
+            return httpx.Response(200, json={})
+
+        with httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="http://open-webui:8080"
+        ) as client:
+            result = sync_knowledge_with_openwebui(
+                client=client,
+                db_path=db_path,
+                secret_key="test-webui-secret",
+            )
+
+        assert result["status"] == "ok"
+        # 1. Pulled from Open WebUI knowledge + nested directory -> workspace_files/contracts/ndas/acme_nda.txt
+        staged_nda = workspace / "contracts" / "ndas" / "acme-nda.txt"
+        assert staged_nda.is_file()
+        assert staged_nda.read_text(encoding="utf-8") == "Confidential NDA terms."
+
+        # 2. Pulled from user Alice's chat folder -> workspace_files/users/alice/research-notes/notes.md
+        staged_user_note = workspace / "users" / "alice" / "research-notes" / "notes.md"
+        assert staged_user_note.is_file()
+        assert "Alice Personal Notes" in staged_user_note.read_text(encoding="utf-8")
+
+        # 3. Pushed local workspace_files/sops/onboarding.md -> Open WebUI Knowledge Base
+        assert any(kb["name"] == "sops" for kb in created_kbs)
+        assert len(uploaded_files) >= 1
+        assert len(added_kb_files) >= 1
+

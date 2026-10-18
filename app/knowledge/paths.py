@@ -91,6 +91,33 @@ def folder_to_table_name(folder: str | None) -> str:
     return (TABLE_PREFIX + slug)[:MAX_TABLE_NAME_LENGTH].rstrip("_")
 
 
+def folder_to_namespace(folder: str | None) -> str:
+    """Map a folder key onto an Agno FileSystem / page-store namespace."""
+    key = normalise_folder(folder)
+    slug = _SLUG_CHARS.sub("-", unicodedata.normalize("NFKD", key).lower()).strip("-")
+    if not slug:
+        slug = DEFAULT_FOLDER
+    return ("kb-" + slug)[:MAX_TABLE_NAME_LENGTH].rstrip("-")
+
+
+def user_folder_key(user_identifier: str | None, folder: str | None) -> str:
+    """Build a user-scoped workspace folder key (`users/<user_slug>/<folder>`).
+
+    If `folder` already begins with `users/`, `projects/`, or `agents/`, it is
+    returned normalized as-is without double-prefixing.
+    """
+    norm_folder = normalise_folder(folder)
+    if norm_folder.startswith(("users/", "projects/", "agents/")):
+        return norm_folder
+    raw_user = (user_identifier or "").strip()
+    if "@" in raw_user:
+        raw_user = raw_user.split("@", 1)[0]
+    user_slug = _SLUG_CHARS.sub("-", unicodedata.normalize("NFKD", raw_user).lower()).strip("-")
+    if not user_slug:
+        return norm_folder
+    return normalise_folder(f"users/{user_slug}/{norm_folder}")
+
+
 def is_supported_file(path: str | Path) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_EXTENSIONS
 

@@ -40,6 +40,7 @@ PLATFORM_AGENT_IDS = frozenset(
         "platform-telemetry",
         "platform-skills",
         "platform-scheduler",
+        "platform-docs",
     }
 )
 PROJECT_TEMPLATE_IDS = frozenset(

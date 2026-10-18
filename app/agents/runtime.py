@@ -42,6 +42,7 @@ CORE_AGENT_IDS = (
     "platform-telemetry",
     "platform-skills",
     "platform-scheduler",
+    "platform-docs",
 )
 TEAM_ID = "oap"
 TEAM_NAME = "Platform Coordinator"
@@ -270,6 +271,27 @@ def _build_platform_scheduler() -> Any:
     )
 
 
+def _build_platform_docs() -> Any:
+    from agno.agent import Agent
+
+    return Agent(
+        id="platform-docs",
+        name="Platform Docs",
+        role="Manages, searches, reads and syncs documentation and reference knowledge folders across disk, Postgres and Open WebUI",
+        model=build_model(settings.oap_docs_model),
+        tools=[*tools.DOCS_TOOLS, *tools.WORKSPACE_TOOLS],
+        instructions=[
+            "You manage and answer questions from any documentation, files or reference knowledge folder on this platform.",
+            "List or grep folders with list_docs_pages and grep_docs_pages before reading full files with read_doc_page.",
+            "Use search_docs_knowledge for semantic/hybrid retrieval across a folder or across all workspace folders.",
+            "Use sync_external_docs_url to pull any external llms.txt or Markdown documentation site into a workspace folder.",
+            "Use sync_openwebui_knowledge to reconcile folders and files between workspace_files/, Postgres and Open WebUI.",
+            "Cite the folder and filename (and line numbers or offsets when relevant) for every answer.",
+        ],
+        **_common(),
+    )
+
+
 _CORE_FACTORIES: dict[str, Callable[[], Any]] = {
     "platform-builder": _build_platform_builder,
     "platform-engineer": _build_platform_engineer,
@@ -277,6 +299,7 @@ _CORE_FACTORIES: dict[str, Callable[[], Any]] = {
     "platform-telemetry": _build_platform_telemetry,
     "platform-skills": _build_platform_skills,
     "platform-scheduler": _build_platform_scheduler,
+    "platform-docs": _build_platform_docs,
 }
 
 
@@ -301,6 +324,7 @@ def _build_team(members: list[Any]) -> Any:
             "Traces, spans, latency and errors go to Platform Telemetry.",
             "Listing, recommending, syncing, writing or attaching skills goes to Platform Skills.",
             "Cron schedules and their run history go to Platform Scheduler.",
+            "Documentation lookup, reference folders, grepping/reading docs, and syncing external or Open WebUI knowledge goes to Platform Docs.",
             "Software development and research are project work, not platform work: tell the user "
             "to pick project-dev or project-researcher in the model list, or to open a project "
             "that includes them. Platform Builder can create that project.",
@@ -446,6 +470,7 @@ def build_project_researcher(project_folder: str | None = None) -> Any:
         model=build_model(settings.oap_researcher_model),
         tools=[
             *research_tools.build_researcher_toolkits(),
+            *tools.DOCS_READ_TOOLS,
             tools.save_text_file_to_folder,
             tools.list_workspace_directories_and_files,
         ],
@@ -486,6 +511,8 @@ def _build_custom_agent(spec: store.AgentSpec) -> Any | None:
             logger.warning("Web search unavailable for %s: %s", spec.agent_id, exc)
 
     knowledge = _folder_knowledge(spec.knowledge_folder)
+    if spec.knowledge_folder:
+        agent_tools.extend(tools.DOCS_READ_TOOLS)
     try:
         return Agent(
             id=spec.agent_id,
@@ -808,6 +835,7 @@ def _build_registry() -> Any:
         settings.oap_manager_model,
         settings.oap_skills_model,
         settings.oap_scheduler_model,
+        settings.oap_docs_model,
         settings.oap_dev_model,
         settings.oap_researcher_model,
     ):
