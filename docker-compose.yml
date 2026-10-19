@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-ai}
-      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS must be set in .env (run `make setup`)}
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS must be set in .env (run `make env`)}
       POSTGRES_DB: ${DB_NAME:-agentos}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
@@ -48,7 +48,7 @@ services:
     env_file: [.env]
     environment:
       # Derived from the DB_* parts so the two can never drift apart.
-      DATABASE_URL: postgresql+psycopg://${DB_USER:-ai}:${DB_PASS:?DB_PASS must be set in .env}@agentos-db:5432/${DB_NAME:-agentos}
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-ai}:${DB_PASS:?DB_PASS must be set in .env (run `make env`)}@agentos-db:5432/${DB_NAME:-agentos}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://agentos-otel:6006}
     volumes:
       - ./workspace_files:/app/workspace_files

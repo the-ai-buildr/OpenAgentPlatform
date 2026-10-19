@@ -23,7 +23,8 @@ Open WebUI  →  AgentOS /v1 bridge  →  Agno agents + team  →  OpenRouter (c
 | **Storage** | PostgreSQL 17 + pgvector 0.8.7 |
 | **Tracing** | OpenTelemetry → Arize Phoenix |
 
-Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Architecture: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.  
+Docker packaging and the production checklist: **[docs/DOCKER.md](docs/DOCKER.md)**.
 
 ---
 
@@ -45,6 +46,7 @@ Architecture notes and the review of the original stack: **[docs/ARCHITECTURE.md
 - [Configuration reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
+- [Further reading](#further-reading)
 
 ---
 
@@ -177,6 +179,8 @@ make down            # stop; data is kept
 `make up` uses `docker-compose.dev.yml`, which bind-mounts `./app` into the
 container and runs uvicorn with `--reload`, so Python edits apply in about a
 second. Changes to `requirements.txt` or the `Dockerfile` need `make build`.
+How the three Compose files relate is spelled out in
+[docs/DOCKER.md](docs/DOCKER.md).
 
 Ports are published on `127.0.0.1` only. To reach the stack from another
 machine, put a reverse proxy in front of it — see
@@ -219,7 +223,7 @@ pytest tests/test_paths.py -v          # one file
 pytest -k traversal                    # one concern
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, the test suite, `docker compose
+CI (`.github/workflows/ci.yml`) runs lint, the 101-test suite, `docker compose
 config` on both overlays, and boots the built image with no provider keys to
 assert it reports `degraded` and rejects an unauthenticated `/v1` call.
 
@@ -417,19 +421,32 @@ credential that grants access to every endpoint.
 
 ## Production deployment
 
+Full packaging notes, overlay behaviour, and a host checklist:
+**[docs/DOCKER.md](docs/DOCKER.md)**.
+
 The production overlay removes the source bind mount and `--reload`, runs
-multiple uvicorn workers, publishes only Open WebUI (on loopback), caps
-container memory and rotates logs.
+multiple uvicorn workers, publishes only Open WebUI (on loopback), documents
+intended memory caps and rotates logs.
 
 ```bash
+make env             # if .env does not exist yet
+# edit .env: OPENROUTER_API_KEY, PUBLIC_BASE_URL, OTEL_ENVIRONMENT=production
 make prod-config     # render and validate first
 make prod-up
+make prod-ps
+make prod-health     # curls /health inside the API container
 make prod-logs
 ```
 
+`make health` / `make models` talk to `localhost:8000`. That port is **not**
+published in production — use `make prod-health` (or `docker compose … exec`)
+instead. Open WebUI remains on `http://127.0.0.1:3000` for the reverse proxy.
+
 ### Before you deploy
 
-**1. Secrets.** Regenerate everything the template ships as a placeholder:
+**1. Secrets.** `make env` generates `DB_PASS`, `OS_SECURITY_KEY` and
+`WEBUI_SECRET_KEY`. If you are reusing a hand-edited `.env`, regenerate any
+value still set to `CHANGE_ME_GENERATED_BY_MAKE_SETUP`:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -505,9 +522,14 @@ and your OpenRouter spend, so disable open sign-up
 (**Settings → Admin → General → Enable New Sign Ups: off**) once your accounts
 exist, and set a spend limit on the OpenRouter key.
 
-**5. Upgrades.** Every image is pinned. To move up, change the tag, read that
-project's release notes, `make build`, `make prod-up`, and check `make health`.
-Take a database dump first.
+**5. Memory limits.** `docker-compose.prod.yml` sets `deploy.resources.limits`
+as documentation of intended size. Plain single-host `docker compose up` often
+ignores that block (Swarm / some compatibility modes honour it). See
+[docs/DOCKER.md](docs/DOCKER.md#production-overlay-behaviour).
+
+**6. Upgrades.** Every image is pinned. To move up, change the tag, read that
+project's release notes, take a database dump, then `make build`,
+`make prod-up`, and `make prod-health`.
 
 ---
 
@@ -572,10 +594,12 @@ Every variable is documented inline in
 
 ## Troubleshooting
 
-### `make up` fails with `DB_PASS must be set in .env`
+### `make up` / `make prod-up` fails with `DB_PASS must be set in .env`
 
-You have no `.env`. Run `make env`. The compose file deliberately refuses to
-start with a default password instead of silently using one.
+You have no `.env`, or it is missing `DB_PASS`. Run `make env`. The compose
+file deliberately refuses to start with a default password instead of silently
+using one. Production also requires `PUBLIC_BASE_URL` — see
+[docs/DOCKER.md](docs/DOCKER.md#deploy-checklist).
 
 ### `/health` says `degraded`
 
@@ -703,14 +727,26 @@ Deletes the database, Open WebUI accounts and chats, and all traces.
 ├── workspace_files/             Documents, one folder per topic
 ├── db/                          pgvector image and first-run SQL
 ├── tests/                       pytest suite
-├── docs/ARCHITECTURE.md         Design and the review of the original stack
-├── docker-compose.yml           Base stack
+├── docs/
+│   ├── ARCHITECTURE.md          Current design + review of the original stack
+│   └── DOCKER.md                Compose overlays, images, production checklist
+├── docker-compose.yml           Base stack (no host ports alone)
 ├── docker-compose.dev.yml       Bind mount, reload, published ports
 ├── docker-compose.prod.yml      No reload, workers, loopback only
 ├── Dockerfile                   Multi-stage, non-root
 ├── Makefile                     Every command
 └── .env.example                 Every variable, documented
 ```
+
+---
+
+## Further reading
+
+| Doc | When to open it |
+|---|---|
+| [docs/DOCKER.md](docs/DOCKER.md) | Deploying or upgrading the containers |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Understanding modules, request path, and review findings |
+| [.env.example](.env.example) | Every environment variable, grouped |
 
 ---
 
