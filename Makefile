@@ -23,7 +23,8 @@ AUTH_HEADER   := Authorization: Bearer $(OS_SECURITY_KEY)
 .PHONY: help setup env venv up dev down restart build rebuild ps status health models \
         watcher-status logs logs-api logs-db logs-otel logs-webui test test-watch lint \
         format typecheck db-shell db-dump db-restore kb-list files-tree urls \
-        prod-config prod-up prod-down prod-logs config destroy-volumes
+        prod-config prod-up prod-down prod-logs prod-ps prod-health prod-status \
+        config destroy-volumes
 
 # --------------------------------------------------------------------------- #
 help: ## Show this help
@@ -46,7 +47,7 @@ help: ## Show this help
 	@grep -hE '^(db-shell|db-dump|db-restore):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  Production"
-	@grep -hE '^(prod-config|prod-up|prod-down|prod-logs):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^(prod-config|prod-up|prod-down|prod-logs|prod-ps|prod-health|prod-status):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  DESTRUCTIVE (asks for confirmation)"
 	@grep -hE '^(destroy-volumes):.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "    \033[31m%-18s\033[0m %s\n", $$1, $$2}'
@@ -190,12 +191,23 @@ prod-config: ## Render and validate the production compose configuration
 prod-up: ## Start the stack with production settings (no reload, no bind mount)
 	$(PROD_COMPOSE) up -d --build
 	@echo "Started. Put a TLS-terminating reverse proxy in front of 127.0.0.1:$(or $(OPEN_WEBUI_PORT),3000)."
+	@echo "API is not published — use 'make prod-health' (see docs/DOCKER.md)."
 
 prod-down: ## Stop the production stack (volumes and data are kept)
 	$(PROD_COMPOSE) down --remove-orphans
 
 prod-logs: ## Tail production logs
 	$(PROD_COMPOSE) logs -f --tail=100
+
+prod-ps: ## Show production container status
+	$(PROD_COMPOSE) ps
+
+prod-health: ## Fetch /health from the API inside the compose network
+	@$(PROD_COMPOSE) exec -T agentos-api curl -fsS http://localhost:8000/health \
+		| $(PY) -m json.tool \
+		|| echo "AgentOS is not reachable via the production compose project. Is it up? (make prod-ps)"
+
+prod-status: prod-ps prod-health ## Production containers and in-network health
 
 # --------------------------------------------------------------------------- #
 # Destructive

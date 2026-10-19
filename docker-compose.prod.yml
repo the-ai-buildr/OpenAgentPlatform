@@ -4,6 +4,9 @@
 # Open WebUI. Only Open WebUI is published, and only on the loopback interface
 # so the proxy is the single ingress. The API, database and Phoenix UI are
 # reachable on the compose network only.
+#
+# Operator checklist and overlay behaviour: docs/DOCKER.md
+# Start with: make prod-config && make prod-up && make prod-health
 
 services:
   agentos-db:

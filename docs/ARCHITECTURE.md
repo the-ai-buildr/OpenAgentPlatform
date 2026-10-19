@@ -1,8 +1,9 @@
-# Architecture review — Agno AgentOS + Open WebUI
+# Architecture — Agno AgentOS + Open WebUI
 
-This document records the review of the pasted `agno-openwebui-stack`, the
-architecture of what is now in this repository, and every change made to the
-original with the reason for it.
+This document is the **current architecture** of the stack in this repository,
+plus the review of the pasted `agno-openwebui-stack` that produced it. Operator
+steps for bringing the containers up (dev and production) live in
+**[DOCKER.md](DOCKER.md)** and the [README](../README.md).
 
 Reviewed against: **Agno 3.1.4** (current on PyPI), the live OpenRouter model
 catalogue, Open WebUI v0.12.3 and Arize Phoenix 20.23.0. Every API claim below
@@ -139,7 +140,7 @@ Each hypothesis from the brief, confirmed or rejected, with what was done.
 | 22 | Every port published on `0.0.0.0` | Required | Dev ports bind `127.0.0.1`; production publishes only Open WebUI, on loopback, behind a proxy. |
 | 23 | Missing `start_period` on the API healthcheck | Nit | 60 s, so a cold start with model downloads is not reported unhealthy. |
 | 24 | No request validation on `/v1/chat/completions` | Required | Pydantic models in `app/bridge/schemas.py`. |
-| 25 | No tests, no CI | Required | 148 tests plus a GitHub Actions workflow that lints, tests, validates both compose files and boots the image to assert it degrades cleanly without keys. |
+| 25 | No tests, no CI | Required | 101 pytest cases plus a GitHub Actions workflow that lints, tests, validates both compose files and boots the image to assert it degrades cleanly without keys. |
 | 26 | A missing API key crashed the app at import | Required | Without `OPENROUTER_API_KEY` the app serves a degraded FastAPI app: `/health` explains why, `/v1/models` still answers, and the container stays healthy instead of crash-looping. |
 | 27 | `make clean` silently ran `down -v` | Required | Renamed `destroy-volumes`, spells out what is lost, requires typing `destroy`, and explicitly says it is **not** the fix for a password error. |
 
@@ -193,7 +194,51 @@ and belongs to the deployment rather than to the data. Writes are atomic
 
 ---
 
-## 4. Verification
+## 4. Docker packaging (deploy topology)
+
+The runtime unit is four Compose services. Source of truth for ports, overlays
+and the production checklist is **[DOCKER.md](DOCKER.md)**; this section is the
+architectural view.
+
+| Service | Image | Role |
+|---|---|---|
+| `agentos-db` | `db/Dockerfile` → `pgvector/pgvector:0.8.7-pg17` | Sessions, runs, metrics (`ai.agno_*`) and per-folder vectors (`ai.kb_*`) |
+| `agentos-otel` | `arizephoenix/phoenix:version-20.23.0` | OTLP/HTTP collector and Phoenix UI |
+| `agentos-api` | root `Dockerfile` → `agno-agentos-api:local` | FastAPI + AgentOS + `/v1` bridge + watcher |
+| `open-webui` | `ghcr.io/open-webui/open-webui:v0.12.3` | Chat UI; talks to the bridge over the compose network |
+
+**Overlays, not profiles.** Development and production are separate Compose
+files layered on the base (`docker-compose.dev.yml` / `docker-compose.prod.yml`).
+The base file alone builds and wires services but publishes no host ports —
+an overlay is always required.
+
+**Image contract.** The API image is multi-stage, runs as uid `10001`, and its
+`CMD` has no `--reload`. Reload and the `./app` bind mount exist only in the
+dev overlay. Production overrides the command to multiple uvicorn workers with
+`--proxy-headers`, keeps `./workspace_files` and the read-only Open WebUI
+uploads mount, and publishes only Open WebUI on `127.0.0.1`.
+
+**Secret refusal.** Compose uses `${VAR:?message}` for `DB_PASS`,
+`OS_SECURITY_KEY`, `WEBUI_SECRET_KEY`, and (prod) `PUBLIC_BASE_URL`. Missing
+values abort startup instead of substituting a published default.
+
+**Volumes.**
+
+| Name / path | Mount | Survives `down`? |
+|---|---|---|
+| `pgdata` | Postgres data | Yes (until `down -v` / `destroy-volumes`) |
+| `openwebui_data` | Open WebUI accounts, chats, uploads; also mounted read-only on the API | Yes |
+| `otel_data` | Phoenix working dir | Yes (disposable) |
+| `./workspace_files` | Host bind — source documents | Host-managed |
+
+**Network trust boundary.** Inside the compose network, Open WebUI reaches the
+API as `http://agentos-api:8000` with `OS_SECURITY_KEY`. Outside, only the
+reverse proxy should touch Open WebUI. The API, database and Phoenix stay off
+the public interface in production.
+
+---
+
+## 5. Verification
 
 | Check | How | Result |
 |---|---|---|
@@ -212,6 +257,7 @@ and belongs to the deployment rather than to the data. Writes are atomic
 | Open WebUI integration | Ran Open WebUI v0.12.3 against the bridge as an OpenAI connection | Its `/api/models` lists all four agents with the right display names |
 | Provider errors surface | Chat with a deliberately invalid OpenRouter key | `502 Agent run failed: User not found.`, and `[agentos error] …` in the stream |
 | Degraded boot | Container started with no provider keys and an unreachable database | `/health` → `degraded` listing all three reasons, `/v1/models` → `[]`, `/v1/chat/completions` → 503 naming the variable, 401 still enforced |
+| Test suite size | `pytest --collect-only` against `tests/` | 101 test functions |
 
-See the "Verified running vs statically checked" section of the pull request
-for what was executed end to end on the build machine.
+See the "Verified running vs statically checked" section of the original stack
+pull request for what was executed end to end on the build machine.
